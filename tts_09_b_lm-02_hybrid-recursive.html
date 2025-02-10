@@ -83,7 +83,7 @@
     let conversationHistory = [];
     
     /***********************
-     * Global Radio Words & LLM Helpers
+     * Global Radio Words & LLM Helper Functions
      ***********************/
     const radioWords = [
       "Copy", "Roger", "Over", "Out", "Standby", "Affirmative", "Negative", "Check", "Brief", "Dispatch",
@@ -230,7 +230,7 @@
     /***********************
      * Helper Functions
      ***********************/
-    // IMPORTANT: Define triggerKeywords so that checkForTrigger works.
+    // Define triggerKeywords for checkForTrigger:
     const triggerKeywords = ["urgent", "alert", "critical"];
     function checkForTrigger(text) {
       const lower = text.toLowerCase();
@@ -651,7 +651,7 @@
                           ? randomChoice(normalObservations)
                           : randomChoice(formalObservations);
           }
-          // Insert snark if the update is normal
+          // Insert snark if update is normal
           if ((environmentCondition === "clear" || environmentCondition === "sunny") && Math.random() < 0.3) {
             observation = randomChoice(snarkyResponses);
           }
@@ -900,9 +900,16 @@
     }
     
     function cleanUpMessageHybrid(message) {
+      // Remove content within square brackets and extra spaces
       message = message.replace(/\[.*?\]/g, "").replace(/\s+/g, " ").trim();
+      // Remove stray tokens like ~end~ or >>
       message = message.replace(/(~end~|>>)/g, "").trim();
+      // Remove any URLs
       message = message.replace(/https?:\/\/\S+/g, "").trim();
+      // Remove any trailing forbidden words ("a", "an", "and", "the", "they") with optional punctuation.
+      while (/\s+(?:a|an|and|the|they)[\s\.,;:!?]*$/i.test(message)) {
+        message = message.replace(/\s+(?:a|an|and|the|they)[\s\.,;:!?]*$/i, "");
+      }
       return message;
     }
     
