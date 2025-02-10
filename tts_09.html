@@ -229,7 +229,8 @@
     function getMoodPrefix(mood) {
       switch(mood) {
         case "agitated": return "Quick update: ";
-        case "reflective": return "Just thinking: ";
+        // Removed "Just thinking:" for reflective mood.
+        case "reflective": return "";
         case "surprised": return "Whoa, ";
         default: return "";
       }
@@ -554,19 +555,16 @@
       users.forEach((user, index) => {
         let voice = null;
         if (platform === "ios") {
-          // Instead of always choosing "Samantha", filter for all English voices.
+          // For iOS, filter for voices whose language starts with "en" and assign round-robin.
           let iosVoices = availableVoices.filter(v => v.lang.startsWith("en"));
           if (iosVoices.length > 0) {
-            // Assign voices in round-robin fashion.
             voice = iosVoices[index % iosVoices.length];
           } else {
             voice = availableVoices[index % availableVoices.length];
           }
         } else if (platform === "android") {
-          // Use voices that include "Google"
           voice = availableVoices.find(v => v.name.includes("Google"));
         } else if (platform === "mac") {
-          // On mac, try "Alex" or "Samantha"
           voice = availableVoices.find(v => v.name === "Alex") || availableVoices.find(v => v.name === "Samantha");
         }
         if (!voice) { voice = availableVoices[index % availableVoices.length]; }
@@ -620,16 +618,17 @@
             chainCounter = 1;
             console.log("Triggered chain activated in forced message (formal).");
           }
-          if (!(environmentCondition === "clear" || environmentCondition === "sunny")) {
-            let conditionRemark = getConditionRemark();
-            if (conditionRemark !== "") { observation += ", " + conditionRemark; }
+          if (environmentCondition === "clear" || environmentCondition === "sunny") {
+            if (Math.random() < 0.5) {
+              observation += ", " + getDayNightRemark();
+            }
           }
-          observation += ", " + getDayNightRemark();
           return `${sender.callSign} to ${forcedReceiver.callSign}: ${opener}${moodPrefix}${prefix}, ${observation} ${location}. Over.`;
         } else {
           let starter = (Math.random() < 0.3) ? randomChoice(extraBanter) : randomChoice(banterStarters);
           let remark = randomChoice(banterRemarks);
-          if (!banterChainActive && Math.random() < 0.7) {
+          // For casual forced replies, now use a 10% chance to trigger a banter chain instead of 40%.
+          if (!banterChainActive && Math.random() < 0.1) {
             banterChainActive = true;
             banterChainCounter = 1;
             console.log("Banter chain triggered in forced message (casual).");
@@ -654,11 +653,11 @@
               chainCounter = 1;
               console.log("Triggered chain activated in broadcast message (formal).");
             }
-            if (!(environmentCondition === "clear" || environmentCondition === "sunny")) {
-              let conditionRemark = getConditionRemark();
-              if (conditionRemark !== "") { observation += ", " + conditionRemark; }
+            if (environmentCondition === "clear" || environmentCondition === "sunny") {
+              if (Math.random() < 0.5) {
+                observation += ", " + getDayNightRemark();
+              }
             }
-            observation += ", " + getDayNightRemark();
             return `${sender.callSign} to all units: ${moodPrefix}${observation} ${location}. Over.`;
           } else {
             let starter = randomChoice(banterStarters);
@@ -683,11 +682,11 @@
               chainCounter = 1;
               console.log("Triggered chain activated in personal message (formal).");
             }
-            if (!(environmentCondition === "clear" || environmentCondition === "sunny")) {
-              let conditionRemark = getConditionRemark();
-              if (conditionRemark !== "") { observation += ", " + conditionRemark; }
+            if (environmentCondition === "clear" || environmentCondition === "sunny") {
+              if (Math.random() < 0.5) {
+                observation += ", " + getDayNightRemark();
+              }
             }
-            observation += ", " + getDayNightRemark();
             return `${sender.callSign} to ${receiver.callSign}: ${moodPrefix}${observation} ${location}. Over.`;
           } else {
             let starter = randomChoice(banterStarters);
@@ -775,15 +774,19 @@
     function generateMessage(sender, forcedReceiver) {
       // For forced (direct) replies:
       if (forcedReceiver) {
-        if (sender.style !== "formal" && !banterChainActive && Math.random() < 0.7) {
-          banterChainActive = true;
-          banterChainCounter = 1;
-          console.log("Banter chain triggered in forced message (casual).");
-        }
-        if (activeConversation || banterChainActive || triggeredChain || unusualChainState !== null) {
-          console.log("Forced reply using chain response.");
-          console.log("In reply from last tx from " + lastMessage.sender.callSign);
-          return generateConversationChainMessage(sender, forcedReceiver);
+        // 70% chance to use a chain response; otherwise, use a standard forced reply.
+        if (Math.random() < 0.7) {
+          if (sender.style !== "formal" && !banterChainActive && Math.random() < 0.1) {
+            // Reduced chance from 40% to 10% for casual forced replies to trigger a banter chain.
+            banterChainActive = true;
+            banterChainCounter = 1;
+            console.log("Banter chain triggered in forced message (casual).");
+          }
+          if (activeConversation || banterChainActive || triggeredChain || unusualChainState !== null) {
+            console.log("Forced reply using chain response.");
+            console.log("In reply from last tx from " + lastMessage.sender.callSign);
+            return generateConversationChainMessage(sender, forcedReceiver);
+          }
         }
       }
       
@@ -808,7 +811,7 @@
      ***********************/
     function playCharacterNoise(user) {
       if (!audioCtx) { const AudioContext = window.AudioContext || window.webkitAudioContext; audioCtx = new AudioContext(); }
-      // Increase the duration to 10 seconds to help avoid gaps on iOS.
+      // Increase duration to 10 seconds to help avoid gaps on iOS.
       const duration = 10, sampleRate = audioCtx.sampleRate, bufferSize = sampleRate * duration;
       const noiseBuffer = audioCtx.createBuffer(1, bufferSize, sampleRate);
       const data = noiseBuffer.getChannelData(0);
@@ -927,11 +930,7 @@
       const voices = window.speechSynthesis.getVoices();
       if (voices.length === 0) {
         updateStatus("Loading voices...");
-        window.speechSynthesis.onvoiceschanged = () => {
-          assignUserVoices();
-          updateStatus("Voices loaded. Starting simulation...");
-          simulateTransmission();
-        };
+        window.speechSynthesis.onvoiceschanged = () => { assignUserVoices(); updateStatus("Voices loaded. Starting simulation..."); simulateTransmission(); };
       } else {
         assignUserVoices();
         updateStatus("Voices loaded. Starting simulation...");
