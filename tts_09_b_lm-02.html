@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Radio Chatter – Dynamic LLM Simulation</title>
+  <title>Radio Chatter – Ultra-Minimal Radio Prompt LLM Simulation</title>
   <style>
     body {
       font-family: monospace;
@@ -62,7 +62,7 @@
   </style>
 </head>
 <body>
-  <h1>Radio Chatter – Dynamic LLM Simulation</h1>
+  <h1>Radio Chatter – Ultra-Minimal Radio Prompt LLM Simulation</h1>
   <div id="controls">
     <button id="startSim">Start Simulation</button>
     <button id="stopSim">Stop Simulation</button>
@@ -90,36 +90,13 @@
     let lastMessage = null;
     let environmentCondition = "clear";  // Hard-coded weather; updated periodically
     let timeOfDay = "day";
+    let transmissionCount = 0;  // Count transmissions
 
-    // Operator profiles
+    // Operator profiles (used only for labeling the log)
     const users = [
-      { 
-        callSign: "Alpha",  
-        pitch: 0.8, 
-        rate: 1.0, 
-        voice: null, 
-        style: "formal", 
-        mood: "calm",
-        profile: "I am Alpha—a seasoned operator known for clear, concise transmissions." 
-      },
-      { 
-        callSign: "Bravo",  
-        pitch: 1.2, 
-        rate: 1.1, 
-        voice: null, 
-        style: "casual", 
-        mood: "agitated",
-        profile: "I am Bravo—an upbeat operator who mixes friendly banter with clear updates." 
-      },
-      { 
-        callSign: "Charlie", 
-        pitch: 0.9, 
-        rate: 0.9, 
-        voice: null, 
-        style: "mixed", 
-        mood: "reflective",
-        profile: "I am Charlie—a thoughtful operator who blends formal clarity with personal insights." 
-      }
+      { callSign: "Alpha", pitch: 0.8, rate: 1.0, voice: null, profile: "a seasoned operator" },
+      { callSign: "Bravo", pitch: 1.2, rate: 1.1, voice: null, profile: "an upbeat operator" },
+      { callSign: "Charlie", pitch: 0.9, rate: 0.9, voice: null, profile: "a thoughtful operator" }
     ];
 
     function updateStatus(message) {
@@ -194,24 +171,7 @@
     }
 
     /***********************
-     * Dynamic Weather Tone (Optional)
-     ***********************/
-    function getWeatherTone() {
-      // With a 50% probability, add a tone instruction based on weather.
-      if (Math.random() < 0.5) {
-        if (environmentCondition === "rainy" || environmentCondition === "stormy") {
-          return "Tone: Sound urgent and somber.";
-        } else if (environmentCondition === "hot") {
-          return "Tone: Be brisk and direct.";
-        } else if (environmentCondition === "cold") {
-          return "Tone: Remain crisp and clear.";
-        }
-      }
-      return "";
-    }
-
-    /***********************
-     * LLM Tuning & Dynamic Prompt Generation
+     * LLM Tuning & Minimal Prompt Generation
      ***********************/
     let generator;  // This will hold our text-generation function.
     async function loadGenerator() {
@@ -242,48 +202,78 @@
       }
     }
 
-    // Function to clean up generated messages.
+    // Array of 50 radio-related words.
+    const radioWords = [
+      "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India", "Juliet",
+      "Kilo", "Lima", "Mike", "November", "Oscar", "Papa", "Quebec", "Romeo", "Sierra", "Tango",
+      "Uniform", "Victor", "Whiskey", "X-ray", "Yankee", "Zulu", "Roger", "Copy", "Over", "Out",
+      "Standby", "Confirm", "Affirmative", "Negative", "Patrol", "Dispatch", "Report",
+      "Brief", "Check", "Secure", "Control", "Monitor", "Notify", "Transmit", "Receive", "Rendezvous",
+      "Coordinate"
+    ];
+
+    // Randomly choose 2-3 words from the array.
+    function generateRandomRadioWords() {
+      const numWords = Math.floor(Math.random() * 2) + 2; // 2 or 3 words
+      const shuffled = radioWords.slice();
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      return shuffled.slice(0, numWords).join(" ");
+    }
+
+    // Minimal prompt generator.
+    function generateMinimalPrompt(count) {
+      let prompt = "";
+      // Every 12th prompt, include a tiny weather/time tag.
+      if (count % 12 === 0) {
+        prompt += `${environmentCondition}, ${timeOfDay}. `;
+      }
+      // Append a random 2-3 word radio phrase.
+      prompt += generateRandomRadioWords();
+      // Final delimiter; chosen to have little meaning to GPT‑2.
+      prompt += " ~";
+      return prompt;
+    }
+
+    // Clean up generated messages.
     function cleanUpMessage(message) {
-      // Remove any bracketed text and normalize whitespace.
       message = message.replace(/\[.*?\]/g, "").replace(/\s+/g, " ").trim();
-      // Remove extraneous phrases (customize as needed).
-      message = message.replace(/(The only|The following sequence|clean, and)/gi, "").trim();
+      // Remove common stray delimiters.
+      message = message.replace(/(~|>>)/g, "").trim();
+      // Remove URLs if any.
+      message = message.replace(/https?:\/\/\S+/g, "").trim();
       return message;
     }
 
-    // Generate a transmission message using a dynamic prompt.
-    async function generateLLMMessage(sender, forcedReceiver) {
-      const weatherTone = getWeatherTone();
-      const prompt = `Operator: ${sender.callSign}
-Profile: ${sender.profile}
-Environment: ${environmentCondition}; Time: ${timeOfDay}.
-Previous Transmission: ${lastMessage ? lastMessage.message : "None"}.
-${weatherTone}
-Transmission:`;
+    // Generate a transmission message using our minimal prompt.
+    async function generateLLMMessage(sender, forcedReceiver, count) {
+      const prompt = generateMinimalPrompt(count);
       console.log("LLM prompt:", prompt);
       try {
         const results = await generator(prompt, { 
-          max_length: 120,         // Allow enough tokens for a complete message
-          temperature: 0.5,         // Lower temperature for deterministic output
+          max_length: 60,         // Shorter output for concise transmissions.
+          temperature: 0.45,      // Lower temperature for even more concise output.
           top_p: 0.9, 
-          repetition_penalty: 1.3   // Discourage prompt echoing
+          repetition_penalty: 1.3
         });
         console.log("Raw GPT‑2 results:");
         console.dir(results);
         let candidate = results[0].generated_text.trim();
-        console.log("Raw candidate message:", candidate);
+        console.log("Raw candidate:", candidate);
         
         // Remove any prompt bleed.
         if (candidate.startsWith(prompt)) {
           candidate = candidate.substring(prompt.length).trim();
         }
-        // Ensure the candidate ends with punctuation.
+        // Ensure proper punctuation.
         if (!/[.!?]$/.test(candidate)) {
           candidate += ".";
         }
-        // If the candidate is too short or contains prompt artifacts, use fallback.
-        if (candidate.length < 30 || candidate.toLowerCase().includes("transmission:")) {
-          console.warn("Candidate trivial; using fallback.");
+        // Fallback if output is too short or contains artifacts.
+        if (candidate.length < 30 || candidate.toLowerCase().includes("~")) {
+          console.warn("Candidate too trivial; using fallback.");
           const fallbackMessages = [
             "All systems nominal.",
             "No anomalies detected.",
@@ -293,14 +283,15 @@ Transmission:`;
           candidate = fallbackMessages[Math.floor(Math.random() * fallbackMessages.length)];
         }
         candidate = cleanUpMessage(candidate);
-        // Optionally append environmental condition if not mentioned.
-        if (environmentCondition !== "clear" && candidate.toLowerCase().indexOf(environmentCondition.toLowerCase()) === -1) {
+        // If weather was included in the prompt, append a tiny note.
+        if (count % 12 === 0 && environmentCondition !== "clear" &&
+            candidate.toLowerCase().indexOf(environmentCondition.toLowerCase()) === -1) {
           candidate += ` (${environmentCondition} conditions)`;
         }
-        console.log("Final candidate message:", candidate);
+        console.log("Final candidate:", candidate);
         return candidate;
       } catch (err) {
-        console.error("LLM generation error:", err);
+        console.error("LLM error:", err);
         return "Error generating message.";
       }
     }
@@ -513,6 +504,9 @@ Transmission:`;
         console.log("Audio context created.");
       }
       
+      // Increment transmission counter.
+      transmissionCount++;
+      
       let sender, forcedReceiver = null;
       // Determine if this is a direct reply.
       if (lastMessage &&
@@ -546,18 +540,20 @@ Transmission:`;
         return;
       }
       
-      const message = await generateLLMMessage(sender, forcedReceiver);
+      const message = await generateLLMMessage(sender, forcedReceiver, transmissionCount);
       const broadcast = (forcedReceiver == null);
       console.log("Final generated message:", message);
       
+      // Append transmission to log with operator label.
       const logDiv = document.getElementById('log');
       const p = document.createElement('p');
-      p.textContent = message;
+      p.textContent = sender.callSign + ": " + message;
       if (sender.callSign === "Alpha") { p.classList.add("log-Alpha"); }
       else if (sender.callSign === "Bravo") { p.classList.add("log-Bravo"); }
       logDiv.appendChild(p);
       logDiv.scrollTop = logDiv.scrollHeight;
       
+      // Speak the message.
       const utterance = new SpeechSynthesisUtterance(message);
       utterance.lang = 'en-US';
       utterance.pitch = sender.pitch;
