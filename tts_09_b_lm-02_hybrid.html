@@ -1,0 +1,1197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Hybrid Radio Chatter Simulation</title>
+  <style>
+    body {
+      font-family: monospace;
+      background-color: #111;
+      color: #0f0;
+      padding: 20px;
+    }
+    h1 { text-align: center; margin-bottom: 20px; }
+    #controls { text-align: center; margin-bottom: 20px; }
+    button, input[type="range"] {
+      padding: 10px 15px; margin: 5px; font-size: 1rem; cursor: pointer;
+    }
+    #log {
+      border: 1px solid #0f0; padding: 10px; height: 300px;
+      overflow-y: auto; background-color: #000;
+    }
+    #log p { margin: 5px 0; }
+    #status { text-align: center; margin-top: 10px; font-style: italic; }
+  </style>
+</head>
+<body>
+  <h1>Hybrid Radio Chatter Simulation</h1>
+  <!-- Single consolidated interface -->
+  <div id="controls">
+    <button id="startSim">Start Simulation</button>
+    <button id="stopSim">Stop Simulation</button>
+    <button id="clearLog">Clear Log</button>
+    <label class="control-label" for="delayMultiplier">Delay Multiplier:</label>
+    <input type="range" id="delayMultiplier" min="0.5" max="3.0" step="0.1" value="1.0">
+    <span id="multiplierValue">1.0</span>
+  </div>
+  <div id="log"></div>
+  <div id="status"></div>
+
+  <!-- Consolidated JavaScript (module required for Transformers.js) -->
+  <script type="module">
+    // Import the Transformers.js pipeline for LLM generation
+    import { pipeline } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@latest/dist/transformers.min.js';
+    
+    /***********************
+     * Global Variables
+     ***********************/
+    let simulationRunning = false;
+    let audioCtx;
+    let basicNoiseSource = null;
+    let advancedNoiseSource = null;
+    let lfo = null;
+    let availableVoices = [];
+    let burstInterferenceTimer = null;  // For burst interference
+    let lastMessage = null;             // Previous transmission (scripted output used for prompt)
+    let activeConversation = null;      // For chain responses
+    let environmentCondition = "clear";
+    let lastEventInfluence = null;      // For mood updates
+    let timeOfDay = "day";              // Day/Night cycle
+    
+    // Chain-related globals
+    let unusualChainState = null;       // "query" or "explanation"
+    let triggeredChain = false;
+    let chainCounter = 0;
+    const maxChainDepth = 3;
+    let banterChainActive = false;
+    let banterChainCounter = 0;
+    const maxBanterChainDepth = 3;
+    
+    // Variables for small talk cut mode
+    let smallTalkCutMode = false;
+    let smallTalkCutUntil = 0;
+    
+    // Hybrid mode globals: every third transmission uses the LLM
+    let transmissionCount = 0;
+    let generator = null;               // LLM generator instance
+
+    /***********************
+     * Global Tone Arrays
+     ***********************/
+    // These arrays define tone for chain responses. You can expand or adjust them as desired.
+    const snarkyResponses = [
+      "That update is as exciting as watching paint dry.",
+      "Yawn... Everything's just as boring as usual.",
+      "I've heard more thrilling news in my sleep.",
+      "This is the epitome of routine."
+    ];
+    // (Your existing arrays for unusual queries and explanations remain in use.)
+    // (Banter chain arrays are defined locally in the chain function below.)
+
+    /***********************
+     * Utility Functions
+     ***********************/
+    function updateStatus(message) {
+      document.getElementById('status').textContent = message;
+    }
+    function randomChoice(arr) {
+      return arr[Math.floor(Math.random() * arr.length)];
+    }
+    function makeNonlinearCurve(amount = 3) {
+      const samples = 1024;
+      const curve = new Float32Array(samples);
+      for (let i = 0; i < samples; i++) {
+        let x = (i * 2) / samples - 1;
+        curve[i] = Math.sign(x) * Math.pow(Math.abs(x), amount);
+      }
+      return curve;
+    }
+    function generateDynamicLocation() {
+      const directions = ["northern", "southern", "eastern", "western", "central"];
+      const locationTypes = ["corridor", "sector", "grid", "zone", "range"];
+      const direction = randomChoice(directions);
+      const type = randomChoice(locationTypes);
+      if (["sector", "zone", "corridor", "range"].includes(type)) {
+        let number = Math.floor(Math.random() * 10) + 1;
+        return `${direction} ${type} ${number}`;
+      } else if (type === "grid") {
+        let number = Math.floor(Math.random() * 10) + 1;
+        let letter = randomChoice("ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(''));
+        return `grid ${number}${letter}`;
+      } else {
+        return `${direction} ${type}`;
+      }
+    }
+    
+    /***********************
+     * Environment & Time Functions
+     ***********************/
+    function updateEnvironment() {
+      const conditions = ["sunny", "clear", "cloudy", "rainy", "stormy", "hot", "cold", "windy", "foggy", "snowy"];
+      environmentCondition = randomChoice(conditions);
+      console.log("Environment updated to:", environmentCondition);
+    }
+    function getConditionRemark() {
+      switch (environmentCondition) {
+        case "sunny": return "with bright, glorious sunshine";
+        case "clear": return "under clear skies";
+        case "cloudy": return "under overcast skies";
+        case "rainy": return "amid heavy rains";
+        case "stormy": return "with a raging storm";
+        case "hot":
+          return timeOfDay === "night" 
+                 ? (Math.random() < 0.5 ? "in scorching heat" : "it's a hot night out there!")
+                 : (Math.random() < 0.5 ? "in scorching heat" : "it's a hot day out there!");
+        case "cold":
+          return timeOfDay === "day" 
+                 ? (Math.random() < 0.5 ? "in freezing conditions" : "it's a cold day out there!")
+                 : (Math.random() < 0.5 ? "in freezing conditions" : "it's a cold night out there!");
+        case "windy": return "as the wind howls";
+        case "foggy": return "in thick fog";
+        case "snowy": return "with falling snow";
+        default: return "";
+      }
+    }
+    function getDayNightRemark() {
+      return (timeOfDay === "night") ? "under a starry sky" : "in bright daylight";
+    }
+    function updateTimeOfDay() {
+      timeOfDay = (timeOfDay === "day") ? "night" : "day";
+      console.log("Time of day updated to:", timeOfDay);
+    }
+    
+    /***********************
+     * Helper Functions
+     ***********************/
+    // Trigger Keyword System
+    const triggerKeywords = ["urgent", "alert", "critical"];
+    function checkForTrigger(text) {
+      const lower = text.toLowerCase();
+      return triggerKeywords.some(keyword => lower.includes(keyword));
+    }
+    // Helper for "odd/unusual" detections
+    function checkForUnusual(text) {
+      const lower = text.toLowerCase();
+      return lower.includes("unusual") || lower.includes("anomalous") ||
+             lower.includes("erratic") || lower.includes("anomaly") ||
+             lower.includes("odd");
+    }
+    
+    /***********************
+     * Mood & Tone Functions
+     ***********************/
+    function updateMood(user) {
+      let baseMood = user.baseMood || "calm";
+      let newMood = baseMood;
+      if (lastEventInfluence) {
+        newMood = (lastEventInfluence === "critical") ? "agitated" : "reflective";
+        lastEventInfluence = null;
+      } else if (Math.random() < 0.3) {
+        switch (environmentCondition) {
+          case "stormy":
+          case "hot":
+          case "windy": newMood = "agitated"; break;
+          case "rainy":
+          case "foggy":
+          case "cold":
+          case "snowy": newMood = "reflective"; break;
+          case "sunny":
+          case "clear": newMood = "calm"; break;
+          default: newMood = baseMood;
+        }
+      }
+      user.mood = newMood;
+      console.log(`${user.callSign} mood updated to ${user.mood} (Base: ${baseMood}, Env: ${environmentCondition})`);
+    }
+    function getMoodPrefix(mood) {
+      switch(mood) {
+        case "agitated": return "Quick update: ";
+        case "reflective": return "";
+        case "surprised": return "Whoa, ";
+        default: return "";
+      }
+    }
+    function getResponsePrefix(style) {
+      if (style === "formal") return "Roger";
+      else if (style === "casual") return "ten four";
+      else return (Math.random() < 0.5) ? "Roger" : "ten four";
+    }
+    
+    /***********************
+     * Simulated Radio Users
+     ***********************/
+    const users = [
+      { callSign: "Alpha",  pitch: 0.8, rate: 1.0, voice: null, broadcastChance: 0.2, style: "formal", mood: "calm", baseMood: "calm" },
+      { callSign: "Bravo",  pitch: 1.2, rate: 1.1, voice: null, broadcastChance: 0.7, style: "casual", mood: "agitated", baseMood: "agitated" },
+      { callSign: "Charlie", pitch: 0.9, rate: 0.9, voice: null, broadcastChance: 0.3, style: "mixed", mood: "reflective", baseMood: "reflective" }
+    ];
+    
+    /***********************
+     * Dialogue Libraries & Topics
+     ***********************/
+    // Basic dialogue arrays
+    const formalObservations = [
+      "our analysis indicates unusual activity",
+      "intel confirms a pattern of erratic signals",
+      "surveillance reports reveal increased communication",
+      "our sensors have detected anomalous readings",
+      "recon data suggests a shift in overall activity"
+    ];
+    const extraFormalObservations = [
+      "recent data suggests a gradual change in conditions",
+      "sensors are picking up subtle fluctuations",
+      "the latest readings hint at evolving patterns",
+      "preliminary reports indicate irregular behavior"
+    ];
+    const normalObservations = [
+      "all systems appear nominal",
+      "everything is functioning within expected parameters",
+      "operations continue as scheduled",
+      "routine checks are in order"
+    ];
+    const banterStarters = ["Hey", "Yo", "Listen up", "Check it out", "Heads up"];
+    const banterRemarks = [
+      "the situation is a bit odd",
+      "I noticed something unusual",
+      "there's a lot going on",
+      "things are definitely shifting",
+      "that action was unexpected"
+    ];
+    const extraBanter = [
+      "This is off the charts!",
+      "You won't believe what's happening!",
+      "It's like nothing I've heard before.",
+      "Absolutely wild!"
+    ];
+    const unscriptedMessages = [
+      "Man, things are off today.",
+      "I don't even know what to say.",
+      "This is just crazy.",
+      "What the heck is going on?",
+      "Seriously, can you believe it?",
+      "No comment."
+    ];
+    const extraUnscripted = [
+      "I'm speechless.",
+      "There's something in the air today.",
+      "Not sure what's happening here."
+    ];
+    const complaints = [
+      "This equipment is really letting me down.",
+      "I can't believe how unreliable these signals are.",
+      "Our systems just aren't performing as expected."
+    ];
+    const updates = [
+      "All systems are operational.",
+      "Routine check complete.",
+      "Everything is running smoothly."
+    ];
+    const allUnscriptedAssets = unscriptedMessages.concat(extraUnscripted, complaints, updates);
+    
+    // Conversation topics
+    const conversationTopics = {
+      weather: {
+        initial: [
+          "The weather's been really strange today—overcast with an unexpected chill.",
+          "I'm noticing a gloomy sky and a persistent chill. It's unusual."
+        ],
+        branchA: [
+          "I think a storm might be brewing; the clouds are darkening.",
+          "The skies are looking ominous—might be a storm soon."
+        ],
+        branchB: [
+          "At least the cool weather is keeping things calm.",
+          "Even with the chill, the weather seems stable."
+        ],
+        chain: [
+          "The chill is growing stronger, and the clouds are thickening.",
+          "I can sense a gradual change in the weather.",
+          "It looks like the temperature is dropping further."
+        ]
+      },
+      equipment: {
+        initial: [
+          "My gear seems to be acting up; the signal is a bit fuzzy today.",
+          "I've noticed some interference with my equipment."
+        ],
+        branchA: [
+          "Maybe it's time for a quick maintenance check.",
+          "I think my equipment might need a tune-up soon."
+        ],
+        branchB: [
+          "Is anyone else noticing issues with their gear?",
+          "My equipment's been a bit unpredictable—could be a minor fault."
+        ],
+        chain: [
+          "The static in my gear is intensifying.",
+          "I'm noticing more interference than usual.",
+          "It might be time for a quick check on my equipment."
+        ]
+      },
+      operations: {
+        initial: [
+          "There's been a noticeable shift in overall activity.",
+          "Communications seem a bit off today."
+        ],
+        branchA: [
+          "I wonder if we're seeing a subtle change in our routine.",
+          "The current activity doesn't quite match our usual patterns."
+        ],
+        branchB: [
+          "It might just be a temporary fluctuation.",
+          "These changes could be nothing—but it's worth noting."
+        ],
+        chain: [
+          "The flow of transmissions is gradually changing.",
+          "I'm sensing a subtle shift in our usual patterns.",
+          "There’s something different in the air today."
+        ]
+      },
+      humorous: {
+        initial: [
+          "Well, that's one for the books!",
+          "You won't believe the stuff coming through today!"
+        ],
+        branchA: [
+          "Sometimes, I swear my radio has a mind of its own.",
+          "I think these frequencies are just messing with me."
+        ],
+        branchB: [
+          "This is absurd—but it’s oddly entertaining.",
+          "Not every day you get such a bizarre update, huh?"
+        ],
+        chain: [
+          "I can't help but chuckle at how unpredictable this is.",
+          "Sometimes the chatter is so offbeat, it's almost comical.",
+          "Who knew radio transmissions could be this funny?"
+        ]
+      },
+      reflective: {
+        initial: [
+          "It's been a long day; I'm taking a moment to reflect.",
+          "Some transmissions really make you ponder the bigger picture."
+        ],
+        branchA: [
+          "I can't shake the feeling there's more beneath the surface.",
+          "The quiet moments between messages speak volumes."
+        ],
+        branchB: [
+          "Every transmission feels like a fragment of a larger story.",
+          "There's a calm introspection in all this chatter."
+        ],
+        chain: [
+          "I'm left thinking about what these messages truly mean.",
+          "Sometimes, the silence is as meaningful as the words.",
+          "I find myself reflecting on the subtle shifts in our chatter."
+        ]
+      },
+      maintenance: {
+        initial: [
+          "It seems some of our equipment might be due for servicing.",
+          "I noticed a few glitches in the systems today."
+        ],
+        branchA: [
+          "Maybe we should schedule a maintenance check soon.",
+          "A quick tune-up could solve these issues."
+        ],
+        branchB: [
+          "Anyone else experiencing similar issues with their gear?",
+          "My instruments have been a bit off—could be routine wear."
+        ],
+        chain: [
+          "The equipment's performance seems to be declining.",
+          "I'm noticing more frequent glitches in the readings.",
+          "It might be time to look over our systems."
+        ]
+      },
+      navigation: {
+        initial: [
+          "I'm having some trouble with the navigation systems today.",
+          "The positional data seems a bit off."
+        ],
+        branchA: [
+          "Perhaps we need to recalibrate our instruments.",
+          "A quick check of our navigation might be in order."
+        ],
+        branchB: [
+          "Is anyone else getting questionable coordinates?",
+          "The data on our current location seems inconsistent."
+        ],
+        chain: [
+          "The navigation readings are becoming less reliable.",
+          "I'm noticing discrepancies in our coordinates.",
+          "It might be time for a recalibration."
+        ]
+      },
+      logistics: {
+        initial: [
+          "Our supply lines seem to be running low on critical resources.",
+          "Logistics reports indicate delays in resupply."
+        ],
+        branchA: [
+          "Maybe we should review our supply routes.",
+          "It might be time to reroute our logistics."
+        ],
+        branchB: [
+          "Our resupply efforts are facing unexpected delays.",
+          "The current logistics situation is less than ideal."
+        ],
+        chain: [
+          "Further delays in resupply are expected.",
+          "The logistics situation is deteriorating.",
+          "We may need to adjust our supply strategy."
+        ]
+      },
+      security: {
+        initial: [
+          "There have been unusual movements near the perimeter.",
+          "Sensors are detecting potential security breaches."
+        ],
+        branchA: [
+          "We should be on high alert.",
+          "Prepare for potential intrusions."
+        ],
+        branchB: [
+          "All clear, but stay vigilant.",
+          "No immediate threats, but remain cautious."
+        ],
+        chain: [
+          "Security status is being monitored closely.",
+          "We are maintaining a heightened state of alert.",
+          "All units, be prepared for unexpected developments."
+        ]
+      },
+      morale: {
+        initial: [
+          "Morale is high today; everyone seems upbeat.",
+          "The team is feeling positive and energized."
+        ],
+        branchA: [
+          "Let's keep this momentum going.",
+          "We should capitalize on this positive energy."
+        ],
+        branchB: [
+          "It's great to see everyone so motivated.",
+          "The vibe is incredible; let's ride this wave."
+        ],
+        chain: [
+          "I still feel that spark from our earlier briefing.",
+          "The enthusiasm is contagious, isn't it?",
+          "We should celebrate this surge in morale."
+        ]
+      },
+      chitchat: {
+        initial: [
+          "Hey, what's up?",
+          "Just checking in—how's everyone doing?",
+          "Anyone got any fun news?"
+        ],
+        branchA: [
+          "I've been wondering, what's new with you all?",
+          "Any interesting stories today?"
+        ],
+        branchB: [
+          "I had the weirdest experience on my way here.",
+          "Sometimes it's good to just chat about nothing in particular."
+        ],
+        chain: [
+          "Just sharing some thoughts here.",
+          "It's the little things that make the day interesting.",
+          "Sometimes, casual chit-chat is all you need."
+        ]
+      }
+    };
+    
+    /***********************
+     * Scripted Events
+     ***********************/
+    const scriptedEvents = [
+      "All units, please standby for an update.",
+      "Attention all stations: an important update is incoming.",
+      "NEWS FLASH: please prepare for further instructions."
+    ];
+    const extraScriptedEvents = [
+      "Stand by for a system update.",
+      "Attention: All units, a new directive will be issued shortly.",
+      "Breaking news: further instructions will follow."
+    ];
+    const allScriptedEvents = scriptedEvents.concat(extraScriptedEvents);
+    
+    /***********************
+     * Voice Assignment
+     ***********************/
+    function assignPreferredVoices() {
+      let platform = "unknown";
+      const ua = navigator.userAgent;
+      if (/Android/i.test(ua)) { platform = "android"; }
+      else if (/iPhone|iPad|iPod/i.test(ua)) { platform = "ios"; }
+      else if (/Macintosh/i.test(ua)) { platform = "mac"; }
+      console.log("Platform detected:", platform);
+      users.forEach((user, index) => {
+        let voice = null;
+        if (platform === "ios") {
+          let iosVoices = availableVoices.filter(v => v.lang.startsWith("en"));
+          voice = iosVoices.length > 0 ? iosVoices[index % iosVoices.length] : availableVoices[index % availableVoices.length];
+        } else if (platform === "android") {
+          voice = availableVoices.find(v => v.name.includes("Google"));
+        } else if (platform === "mac") {
+          voice = availableVoices.find(v => v.name === "Alex") || availableVoices.find(v => v.name === "Samantha");
+        }
+        if (!voice) { voice = availableVoices[index % availableVoices.length]; }
+        user.voice = voice;
+        console.log(`Assigned ${user.callSign} voice: ${user.voice.name}`);
+      });
+      updateStatus(`Voices assigned for platform: ${platform}.`);
+    }
+    function assignUserVoices() {
+      availableVoices = window.speechSynthesis.getVoices();
+      if (availableVoices.length === 0) {
+        updateStatus("No voices available. Waiting for voiceschanged event.");
+        window.speechSynthesis.onvoiceschanged = () => {
+          availableVoices = window.speechSynthesis.getVoices();
+          assignPreferredVoices();
+        };
+      } else { 
+        assignPreferredVoices(); 
+      }
+    }
+    
+    /***********************
+     * Scripted Dialogue Generation
+     ***********************/
+    function generateStandardMessage(sender, forcedReceiver) {
+      let style = (sender.style === "mixed")
+                  ? (Math.random() < 0.5 ? "formal" : "casual")
+                  : sender.style;
+      let moodPrefix = (sender.mood !== "calm") ? getMoodPrefix(sender.mood) : "";
+      const location = generateDynamicLocation();
+      
+      if (forcedReceiver) {
+        let opener = (Math.random() < 0.5)
+          ? randomChoice(["In response,", "Regarding that,", "About that,"]) + " "
+          : "";
+        let prefix = getResponsePrefix(style);
+        if (sender.callSign === "Alpha" && Math.random() < 0.2) {
+          smallTalkCutMode = true;
+          smallTalkCutUntil = Date.now() + 3 * 60 * 1000;
+          console.log("Alpha commanded: Cut the small talk.");
+          return `${sender.callSign}: Cut the small talk. Bravo and Charlie, keep your chatter brief. Over.`;
+        }
+        if (style === "formal") {
+          let observation;
+          if (Math.random() < 0.3) {
+            observation = randomChoice(extraFormalObservations);
+          } else {
+            observation = (environmentCondition === "clear" || environmentCondition === "sunny")
+                          ? randomChoice(normalObservations)
+                          : randomChoice(formalObservations);
+          }
+          // If the update is from the "normal" set and the environment is clear/sunny, chance for snark.
+          if ((environmentCondition === "clear" || environmentCondition === "sunny") && Math.random() < 0.3) {
+            observation = randomChoice(snarkyResponses);
+          }
+          if (checkForUnusual(observation)) {
+            unusualChainState = "query";
+            console.log("Unusual chain triggered in forced message (formal).");
+          }
+          if (checkForTrigger(observation)) {
+            triggeredChain = true;
+            chainCounter = 1;
+            console.log("Triggered chain activated in forced message (formal).");
+          }
+          if (environmentCondition === "clear" || environmentCondition === "sunny") {
+            if (Math.random() < 0.5) {
+              observation += ", " + getDayNightRemark();
+            }
+          }
+          return `${sender.callSign} to ${forcedReceiver.callSign}: ${opener}${moodPrefix}${prefix}, ${observation} ${location}. Over.`;
+        } else {
+          let banterChance = smallTalkCutMode ? 0.01 : 0.4;
+          let starter = (Math.random() < 0.3) ? randomChoice(extraBanter) : randomChoice(banterStarters);
+          let remark = randomChoice(banterRemarks);
+          if (!banterChainActive && Math.random() < banterChance) {
+            banterChainActive = true;
+            banterChainCounter = 1;
+            console.log("Banter chain triggered in forced message (casual).");
+          }
+          return `${sender.callSign} to ${forcedReceiver.callSign}: ${opener}${moodPrefix}${prefix}, ${starter} – ${remark}. Over.`;
+        }
+      } else {
+        let isBroadcast = Math.random() < sender.broadcastChance;
+        if (isBroadcast) {
+          if (style === "formal") {
+            let observation;
+            if (Math.random() < 0.3) { observation = randomChoice(extraFormalObservations); }
+            else { observation = (environmentCondition === "clear" || environmentCondition === "sunny")
+                          ? randomChoice(normalObservations)
+                          : randomChoice(formalObservations); }
+            // Chance for snark when things are "normal"
+            if ((environmentCondition === "clear" || environmentCondition === "sunny") && Math.random() < 0.3) {
+              observation = randomChoice(snarkyResponses);
+            }
+            if (checkForUnusual(observation)) {
+              unusualChainState = "query";
+              console.log("Unusual chain triggered in broadcast message (formal).");
+            }
+            if (checkForTrigger(observation)) {
+              triggeredChain = true;
+              chainCounter = 1;
+              console.log("Triggered chain activated in broadcast message (formal).");
+            }
+            if (environmentCondition === "clear" || environmentCondition === "sunny") {
+              if (Math.random() < 0.5) {
+                observation += ", " + getDayNightRemark();
+              }
+            }
+            return `${sender.callSign} to all units: ${moodPrefix}${observation} ${location}. Over.`;
+          } else {
+            let starter = randomChoice(banterStarters);
+            let remark = randomChoice(banterRemarks);
+            return `${sender.callSign} to all units: ${moodPrefix}${starter} – ${remark}. Over.`;
+          }
+        } else {
+          let potentialReceivers = users.filter(u => u.callSign !== sender.callSign);
+          let receiver = randomChoice(potentialReceivers);
+          if (style === "formal") {
+            let observation;
+            if (Math.random() < 0.3) { observation = randomChoice(extraFormalObservations); }
+            else { observation = (environmentCondition === "clear" || environmentCondition === "sunny")
+                          ? randomChoice(normalObservations)
+                          : randomChoice(formalObservations); }
+            // Chance for snark on "normal" updates
+            if ((environmentCondition === "clear" || environmentCondition === "sunny") && Math.random() < 0.3) {
+              observation = randomChoice(snarkyResponses);
+            }
+            if (checkForUnusual(observation)) {
+              unusualChainState = "query";
+              console.log("Unusual chain triggered in personal message (formal).");
+            }
+            if (checkForTrigger(observation)) {
+              triggeredChain = true;
+              chainCounter = 1;
+              console.log("Triggered chain activated in personal message (formal).");
+            }
+            if (environmentCondition === "clear" || environmentCondition === "sunny") {
+              if (Math.random() < 0.5) {
+                observation += ", " + getDayNightRemark();
+              }
+            }
+            return `${sender.callSign} to ${receiver.callSign}: ${moodPrefix}${observation} ${location}. Over.`;
+          } else {
+            let starter = randomChoice(banterStarters);
+            let remark = randomChoice(banterRemarks);
+            return `${sender.callSign} to ${receiver.callSign}: ${moodPrefix}${starter} – ${remark}. Over.`;
+          }
+        }
+      }
+    }
+    
+    function generateConversationChainMessage(sender, forcedReceiver) {
+      if (!activeConversation) {
+        activeConversation = {
+          topic: randomChoice(Object.keys(conversationTopics)),
+          lastSpeaker: sender.callSign,
+          count: 0
+        };
+        console.log("Active conversation initialized with topic:", activeConversation.topic);
+      }
+      let template;
+      // Define banter chain arrays locally (could also be global)
+      const banterChainQueries = [
+        "Really? That's hilarious—what happened next?",
+        "Are you serious? Tell me more!",
+        "That sounds wild! Can you elaborate?",
+        "Seriously, what did you see?"
+      ];
+      const banterChainExplanations = [
+        "I know, right? It's just too funny!",
+        "Absolutely, it's a riot!",
+        "I'm still laughing about that one!",
+        "Totally, it's a real laugh!"
+      ];
+      
+      if (triggeredChain) {
+        template = (chainCounter % 2 === 1)
+          ? randomChoice(triggeredChainQueries)
+          : randomChoice(triggeredChainExplanations);
+        chainCounter++;
+        console.log("Using triggered chain template:", template);
+        if (chainCounter > maxChainDepth) {
+          triggeredChain = false;
+          chainCounter = 0;
+          console.log("Triggered chain reset (max depth reached).");
+        }
+      }
+      else if (banterChainActive) {
+        template = (banterChainCounter % 2 === 1)
+          ? randomChoice(banterChainQueries)
+          : randomChoice(banterChainExplanations);
+        banterChainCounter++;
+        console.log("Using banter chain template:", template);
+        if (banterChainCounter > maxBanterChainDepth) {
+          banterChainActive = false;
+          banterChainCounter = 0;
+          console.log("Banter chain reset (max depth reached).");
+        }
+      }
+      else if (unusualChainState !== null) {
+        template = (unusualChainState === "query")
+          ? randomChoice(unusualQueries)
+          : randomChoice(unusualExplanations);
+        unusualChainState = (unusualChainState === "query") ? "explanation" : "query";
+        console.log("Using unusual chain template:", template);
+      }
+      else {
+        let topic = activeConversation.topic;
+        let branchChoice = Math.random();
+        if (branchChoice < 0.33) { template = randomChoice(conversationTopics[topic].initial); }
+        else if (branchChoice < 0.66) { template = randomChoice(conversationTopics[topic].branchA); }
+        else { template = randomChoice(conversationTopics[topic].branchB); }
+      }
+      let opener = (Math.random() < 0.5)
+        ? randomChoice(["In response,", "Regarding that,", "About that,"]) + " "
+        : "";
+      let style = (sender.style === "mixed")
+                  ? (Math.random() < 0.5 ? "formal" : "casual")
+                  : sender.style;
+      let prefix = getResponsePrefix(style);
+      if (style === "formal") {
+        let conditionRemark = getConditionRemark();
+        if (conditionRemark !== "") { template += ", " + conditionRemark; }
+      }
+      activeConversation.lastSpeaker = sender.callSign;
+      activeConversation.count++;
+      if (activeConversation.count >= 5) { activeConversation = null; }
+      return `${sender.callSign} to ${forcedReceiver.callSign}: ${opener}${getMoodPrefix(sender.mood)}${prefix}, ${template} Over.`;
+    }
+    
+    function generateUnscriptedMessage(sender) {
+      let msg = randomChoice(allUnscriptedAssets);
+      if (Math.random() < 0.5) { msg = `${sender.callSign}: ${msg}`; }
+      return msg;
+    }
+    
+    // Main scripted generator
+    function generateMessage(sender, forcedReceiver) {
+      if (smallTalkCutMode && Date.now() > smallTalkCutUntil) {
+        smallTalkCutMode = false;
+        console.log("Small talk cut mode deactivated.");
+      }
+      if (forcedReceiver) {
+        if (Math.random() < 0.7) {
+          let banterChance = (sender.style !== "formal" && !banterChainActive)
+                             ? (smallTalkCutMode ? 0.01 : 0.4)
+                             : 0;
+          if (banterChance > 0 && Math.random() < banterChance) {
+            banterChainActive = true;
+            banterChainCounter = 1;
+            console.log("Banter chain triggered in forced message (casual).");
+          }
+          if (activeConversation || banterChainActive || triggeredChain || unusualChainState !== null) {
+            console.log("Forced reply using chain response.");
+            console.log("In reply from last tx from " + lastMessage.sender.callSign);
+            return generateConversationChainMessage(sender, forcedReceiver);
+          }
+        }
+      }
+      let unscriptedChance = forcedReceiver ? 0.1 : 0.3;
+      if (Math.random() < unscriptedChance) { 
+        return generateUnscriptedMessage(sender); 
+      }
+      
+      updateMood(sender);
+      
+      if (!forcedReceiver && !activeConversation && Math.random() < 0.2) {
+        let topics = Object.keys(conversationTopics);
+        let chosenTopic = randomChoice(topics);
+        activeConversation = { topic: chosenTopic, lastSpeaker: sender.callSign, count: 1 };
+        let template = randomChoice(conversationTopics[chosenTopic].initial);
+        return `${sender.callSign}: ${getMoodPrefix(sender.mood)}${template}`;
+      }
+      
+      return generateStandardMessage(sender, forcedReceiver);
+    }
+    
+    /***********************
+     * LLM Functions for Hybrid Mode
+     ***********************/
+    // Global radioWords (used in LLM prompt generation)
+    const radioWords = [
+      "Copy", "Roger", "Over", "Out", "Standby", "Affirmative", "Negative", "Check", "Brief", "Dispatch",
+      "Patrol", "Secure", "Control", "Monitor", "Report", "Update", "Confirm", "Rendezvous", "Coordinate", "Tally",
+      "Status", "Proceed", "Halt", "Reset", "Regroup", "EnRoute", "Vantage", "Clarity", "Command", "Initiate",
+      "Maintain", "Execute", "Advise", "Ready", "Caution", "Alert", "Notify", "Observe", "Sync", "Align",
+      "Shift", "Focus", "Delta", "Echo", "Foxtrot", "Zulu", "Sierra", "Tango", "Bravo", "Charlie"
+    ];
+    
+    function generateRandomRadioWordsHybrid() {
+      const numWords = Math.floor(Math.random() * 2) + 2;
+      const shuffled = radioWords.slice();
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      return shuffled.slice(0, numWords).join(" ");
+    }
+    function getPreviousSnippetHybrid(previousTransmission) {
+      if (!previousTransmission) return "";
+      const words = previousTransmission.split(/\s+/);
+      if (words.length < 5) return "";
+      return words.slice(0, 5).join(" ");
+    }
+    function generateMinimalPrompt(count) {
+      let prompt = "";
+      if (count % 12 === 0) {
+        prompt += `${environmentCondition}, ${timeOfDay}. `;
+      }
+      const snippet = getPreviousSnippetHybrid(lastMessage ? lastMessage.message : "");
+      if (snippet) {
+        prompt += `(${snippet}) `;
+      }
+      prompt += generateRandomRadioWordsHybrid();
+      return prompt;
+    }
+    function cleanUpMessageHybrid(message) {
+      message = message.replace(/\[.*?\]/g, "").replace(/\s+/g, " ").trim();
+      message = message.replace(/(~end~|>>)/g, "").trim();
+      message = message.replace(/https?:\/\/\S+/g, "").trim();
+      return message;
+    }
+    async function loadGenerator() {
+      if (!generator) {
+        updateStatus("Loading LLM model...");
+        generator = await pipeline('text-generation', 'Xenova/gpt2');
+        updateStatus("LLM model loaded.");
+        console.log("LLM model loaded:", generator);
+      }
+    }
+    async function generateLLMMessage(sender, forcedReceiver, count) {
+      const prompt = generateMinimalPrompt(count);
+      console.log("LLM prompt:", prompt);
+      try {
+        const results = await generator(prompt, { 
+          max_length: 40,
+          temperature: 0.4,
+          top_p: 0.9,
+          repetition_penalty: 1.5
+        });
+        let candidate = results[0].generated_text.trim();
+        if (candidate.startsWith(prompt)) {
+          candidate = candidate.substring(prompt.length).trim();
+        }
+        if (!/[.!?]$/.test(candidate)) {
+          candidate += ".";
+        }
+        if (candidate.length < 30 || candidate.toLowerCase().includes("~end~")) {
+          const fallbackMessages = [
+            "All systems nominal.",
+            "No anomalies detected.",
+            "Routine check complete.",
+            "Standby for further instructions."
+          ];
+          candidate = randomChoice(fallbackMessages);
+        }
+        candidate = cleanUpMessageHybrid(candidate);
+        if (count % 12 === 0 && environmentCondition !== "clear" &&
+            candidate.toLowerCase().indexOf(environmentCondition.toLowerCase()) === -1) {
+          candidate += ` (${environmentCondition} conditions)`;
+        }
+        console.log("Final candidate:", candidate);
+        return candidate;
+      } catch (err) {
+        console.error("LLM error:", err);
+        return "Error generating message.";
+      }
+    }
+    
+    /***********************
+     * Audio & Interference Functions
+     ***********************/
+    function playCharacterNoise(user) {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+      }
+      const duration = 10, sampleRate = audioCtx.sampleRate, bufferSize = sampleRate * duration;
+      const noiseBuffer = audioCtx.createBuffer(1, bufferSize, sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      const noiseSource = audioCtx.createBufferSource();
+      noiseSource.buffer = noiseBuffer;
+      noiseSource.loop = true;
+      const filter = audioCtx.createBiquadFilter();
+      if (user.callSign === "Alpha") {
+        filter.type = "lowpass";
+        filter.frequency.setValueAtTime(500, audioCtx.currentTime);
+      } else if (user.callSign === "Bravo") {
+        filter.type = "bandpass";
+        filter.frequency.setValueAtTime(2000, audioCtx.currentTime);
+        filter.Q.setValueAtTime(1.0, audioCtx.currentTime);
+      } else if (user.callSign === "Charlie") {
+        filter.type = "highpass";
+        filter.frequency.setValueAtTime(1500, audioCtx.currentTime);
+      } else {
+        filter.type = "bandpass";
+        filter.frequency.setValueAtTime(1000, audioCtx.currentTime);
+      }
+      const gainNode = audioCtx.createGain();
+      gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+      noiseSource.connect(filter);
+      filter.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      noiseSource.start();
+      return noiseSource;
+    }
+    function playCommBlip() {
+      if (!audioCtx) return;
+      const blipOsc = audioCtx.createOscillator();
+      const blipGain = audioCtx.createGain();
+      blipOsc.frequency.setValueAtTime(1200, audioCtx.currentTime);
+      blipGain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      blipOsc.connect(blipGain);
+      blipGain.connect(audioCtx.destination);
+      blipOsc.start();
+      blipGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+      blipOsc.stop(audioCtx.currentTime + 0.15);
+    }
+    function startInterference() {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+      }
+      const sampleRate = audioCtx.sampleRate, bufferSize = sampleRate * 10;
+      const noiseBuffer = audioCtx.createBuffer(1, bufferSize, sampleRate);
+      const output = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        output[i] = Math.random() * 2 - 1;
+      }
+      basicNoiseSource = audioCtx.createBufferSource();
+      basicNoiseSource.buffer = noiseBuffer;
+      basicNoiseSource.loop = true;
+      const basicFilter = audioCtx.createBiquadFilter();
+      basicFilter.type = "bandpass";
+      basicFilter.frequency.setValueAtTime(3000, audioCtx.currentTime);
+      basicFilter.Q.setValueAtTime(1, audioCtx.currentTime);
+      const basicGain = audioCtx.createGain();
+      basicGain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+      basicNoiseSource.connect(basicFilter);
+      basicFilter.connect(basicGain);
+      basicGain.connect(audioCtx.destination);
+      basicNoiseSource.start();
+      
+      advancedNoiseSource = audioCtx.createBufferSource();
+      advancedNoiseSource.buffer = noiseBuffer;
+      advancedNoiseSource.loop = true;
+      const advancedFilter = audioCtx.createBiquadFilter();
+      advancedFilter.type = "bandpass";
+      advancedFilter.frequency.setValueAtTime(2500, audioCtx.currentTime);
+      advancedFilter.Q.setValueAtTime(1.5, audioCtx.currentTime);
+      const advancedGain = audioCtx.createGain();
+      advancedGain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+      lfo = audioCtx.createOscillator();
+      lfo.frequency.setValueAtTime(0.5, audioCtx.currentTime);
+      const lfoGain = audioCtx.createGain();
+      lfoGain.gain.setValueAtTime(0.03, audioCtx.currentTime);
+      const nonLinearShaper = audioCtx.createWaveShaper();
+      nonLinearShaper.curve = makeNonlinearCurve(3);
+      nonLinearShaper.oversample = '4x';
+      lfo.connect(lfoGain);
+      lfoGain.connect(nonLinearShaper);
+      nonLinearShaper.connect(advancedGain.gain);
+      lfo.start();
+      advancedNoiseSource.connect(advancedFilter);
+      advancedFilter.connect(advancedGain);
+      advancedGain.connect(audioCtx.destination);
+      advancedNoiseSource.start();
+    }
+    function triggerBurstInterference() {
+      if (!audioCtx) return;
+      const burstDuration = 0.1, sampleRate = audioCtx.sampleRate;
+      const burstBuffer = audioCtx.createBuffer(1, sampleRate * burstDuration, sampleRate);
+      const burstData = burstBuffer.getChannelData(0);
+      for (let i = 0; i < burstBuffer.length; i++) {
+        burstData[i] = Math.random() * 2 - 1;
+      }
+      const burstSource = audioCtx.createBufferSource();
+      burstSource.buffer = burstBuffer;
+      const burstGain = audioCtx.createGain();
+      burstGain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      burstGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + burstDuration);
+      const burstFilter = audioCtx.createBiquadFilter();
+      burstFilter.type = "highpass";
+      burstFilter.frequency.setValueAtTime(2000, audioCtx.currentTime);
+      burstSource.connect(burstFilter);
+      burstFilter.connect(burstGain);
+      burstGain.connect(audioCtx.destination);
+      burstSource.start();
+      burstSource.stop(audioCtx.currentTime + burstDuration);
+    }
+    function scheduleBurstInterference() {
+      if (!simulationRunning) return;
+      const burstInterval = Math.random() * 3000 + 2000;
+      burstInterferenceTimer = setTimeout(() => { 
+        triggerBurstInterference(); 
+        scheduleBurstInterference(); 
+      }, burstInterval);
+    }
+    
+    /***********************
+     * Hybrid Transmission Simulation
+     ***********************/
+    // This async function increments the transmission counter.
+    // Every third transmission uses the LLM-based generator; otherwise, it uses the scripted generator.
+    async function simulateTransmission() {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+        console.log("Audio context created.");
+      }
+      
+      transmissionCount++;
+      console.log("Transmission count:", transmissionCount);
+      
+      let sender, forcedReceiver = null;
+      if (lastMessage && !lastMessage.broadcast && Math.random() < 0.7) {
+        sender = lastMessage.receiver;
+        forcedReceiver = lastMessage.sender;
+        console.log(`Direct response: ${sender.callSign} replying to ${forcedReceiver.callSign}`);
+      } else {
+        let possibleSenders = users;
+        if (lastMessage) { 
+          possibleSenders = users.filter(u => u.callSign !== lastMessage.sender.callSign); 
+        }
+        sender = randomChoice(possibleSenders);
+        console.log(`New transmission from: ${sender.callSign}`);
+      }
+      
+      let message = "";
+      if (transmissionCount % 3 === 0) {
+        console.log("Using LLM-based generation for transmission #" + transmissionCount);
+        await loadGenerator();
+        message = await generateLLMMessage(sender, forcedReceiver, transmissionCount);
+      } else {
+        console.log("Using scripted generation for transmission #" + transmissionCount);
+        message = generateMessage(sender, forcedReceiver);
+      }
+      
+      let broadcast = message.includes("to all units:");
+      console.log("Generated message:", message);
+      
+      // Append the message to the log.
+      const logDiv = document.getElementById('log');
+      const p = document.createElement('p');
+      if (forcedReceiver) {
+        p.textContent = `${sender.callSign} to ${forcedReceiver.callSign}: ${message}`;
+      } else {
+        p.textContent = (broadcast ? `${sender.callSign} to all units: ` : `${sender.callSign}: `) + message;
+      }
+      if (sender.callSign === "Alpha") { p.classList.add("log-Alpha"); }
+      else if (sender.callSign === "Bravo") { p.classList.add("log-Bravo"); }
+      logDiv.appendChild(p);
+      logDiv.scrollTop = logDiv.scrollHeight;
+      
+      // Speak the message using the Web Speech API.
+      const utterance = new SpeechSynthesisUtterance(message);
+      utterance.lang = 'en-US';
+      utterance.pitch = sender.pitch;
+      utterance.rate = sender.rate;
+      if (sender.voice) { utterance.voice = sender.voice; }
+      
+      let charNoiseSource = null;
+      utterance.onstart = function() {
+        playCommBlip();
+        charNoiseSource = playCharacterNoise(sender);
+      };
+      utterance.onend = function() {
+        playCommBlip();
+        if (charNoiseSource) {
+          try { 
+            charNoiseSource.stop(); 
+          } catch(e) { console.error("Error stopping noise:", e); }
+        }
+        let multiplier = parseFloat(document.getElementById("delayMultiplier").value);
+        let delay = (lastMessage && lastMessage.isResponse)
+                    ? (Math.random() * (5000 - 3000) + 3000) * multiplier
+                    : (Math.random() * (10000 - 6000) + 6000) * multiplier;
+        console.log(`Next message in ${(delay / 1000).toFixed(1)} seconds.`);
+        setTimeout(() => { if (simulationRunning) simulateTransmission(); }, delay);
+      };
+      
+      window.speechSynthesis.speak(utterance);
+      
+      let receiverObj;
+      if (forcedReceiver) { 
+        receiverObj = forcedReceiver; 
+      } else if (broadcast) { 
+        receiverObj = { callSign: "all units" }; 
+      } else {
+        let potentialReceivers = users.filter(u => u.callSign !== sender.callSign);
+        receiverObj = randomChoice(potentialReceivers);
+      }
+      
+      lastMessage = {
+        sender: sender,
+        receiver: receiverObj,
+        broadcast: broadcast,
+        message: message,
+        isResponse: (forcedReceiver !== null)
+      };
+    }
+    
+    /***********************
+     * Simulation Control
+     ***********************/
+    function startSimulation() {
+      if (simulationRunning) return;
+      simulationRunning = true;
+      console.log("Simulation starting...");
+      
+      assignUserVoices();
+      updateStatus("Voices loaded. Starting simulation...");
+      simulateTransmission();
+      
+      startInterference();
+      scheduleBurstInterference();
+      setInterval(updateEnvironment, 60000);
+      setInterval(updateTimeOfDay, 30000);
+      setInterval(() => {
+        if (audioCtx && audioCtx.state === 'suspended') {
+          audioCtx.resume().then(() => { console.log("Audio context resumed"); })
+            .catch((err) => { console.error("Error resuming audio context:", err); });
+        }
+      }, 10000);
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && audioCtx && audioCtx.state === 'suspended') {
+          audioCtx.resume().then(() => { console.log("Audio context resumed on visibility change"); });
+        }
+      });
+    }
+    
+    function stopSimulation() {
+      simulationRunning = false;
+      window.speechSynthesis.cancel();
+      updateStatus("Simulation stopped.");
+      console.log("Simulation stopped.");
+      
+      if (basicNoiseSource) { try { basicNoiseSource.stop(); } catch(e) { console.error(e); } basicNoiseSource.disconnect(); basicNoiseSource = null; }
+      if (advancedNoiseSource) { try { advancedNoiseSource.stop(); } catch(e) { console.error(e); } advancedNoiseSource.disconnect(); advancedNoiseSource = null; }
+      if (lfo) { try { lfo.stop(); } catch(e) { console.error(e); } lfo.disconnect(); lfo = null; }
+      if (burstInterferenceTimer) { clearTimeout(burstInterferenceTimer); burstInterferenceTimer = null; }
+    }
+    
+    /***********************
+     * UI Event Listeners
+     ***********************/
+    document.getElementById('startSim').addEventListener('click', startSimulation);
+    document.getElementById('stopSim').addEventListener('click', stopSimulation);
+    document.getElementById('clearLog').addEventListener('click', () => { 
+      document.getElementById('log').innerHTML = ""; 
+    });
+    document.getElementById('delayMultiplier').addEventListener('input', (event) => { 
+      document.getElementById('multiplierValue').textContent = event.target.value; 
+    });
+  </script>
+</body>
+</html>
