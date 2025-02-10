@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Enhanced Context & Memory – Hybrid Radio Chatter Simulation</title>
+  <title>Enhanced Context Memory – Hybrid Radio Chatter Simulation</title>
   <style>
+    /* Retro console styling */
     body {
       font-family: monospace;
       background-color: #111;
@@ -26,11 +27,16 @@
       background-color: #000;
     }
     #log p { margin: 5px 0; }
-    #status { text-align: center; margin-top: 10px; font-style: italic; }
+    /* Display areas for status and counters */
+    #status, #txCount, #llmSuccess, #llmFailure {
+      text-align: center;
+      margin-top: 10px;
+      font-style: italic;
+    }
   </style>
 </head>
 <body>
-  <h1>Enhanced Context & Memory – Hybrid Radio Chatter Simulation</h1>
+  <h1>Enhanced Context Memory – Hybrid Radio Chatter Simulation</h1>
   <div id="controls">
     <button id="startSim">Start Simulation</button>
     <button id="stopSim">Stop Simulation</button>
@@ -41,9 +47,14 @@
   </div>
   <div id="log"></div>
   <div id="status"></div>
+  <!-- GUI Counters -->
+  <div id="txCount">Transmission Count: 0</div>
+  <div id="llmSuccess">LLM Success: 0</div>
+  <div id="llmFailure">LLM Fail: 0</div>
 
   <!-- This module requires serving via HTTP -->
   <script type="module">
+    // Import the transformers pipeline (LLM for text generation)
     import { pipeline } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@latest/dist/transformers.min.js';
     
     /***********************
@@ -56,13 +67,13 @@
     let lfo = null;
     let availableVoices = [];
     let burstInterferenceTimer = null;
-    let lastMessage = null;             // Last message (object with { message, topic } – topic may be null)
-    let activeConversation = null;      // For chain responses (contains a topic)
-    let environmentCondition = "clear";
-    let lastEventInfluence = null;      // For mood updates
-    let timeOfDay = "day";
+    let lastMessage = null;             // { message, topic }
+    let activeConversation = null;      // For chain responses (with topic)
+    let environmentCondition = "clear"; // Current weather condition
+    let lastEventInfluence = null;      // Recent event influence on mood
+    let timeOfDay = "day";              // "day" or "night"
     
-    // Chain-related globals
+    // Dialogue chain globals
     let unusualChainState = null;       // "query" or "explanation"
     let triggeredChain = false;
     let chainCounter = 0;
@@ -71,7 +82,7 @@
     let banterChainCounter = 0;
     const maxBanterChainDepth = 3;
     
-    // For small talk cut mode
+    // Small talk cut mode variables
     let smallTalkCutMode = false;
     let smallTalkCutUntil = 0;
     
@@ -79,8 +90,62 @@
     let transmissionCount = 0;
     let generator = null;
     
-    // Conversation history: store up to 5 messages with optional topic tags
+    // Conversation history: store up to 10 messages
     let conversationHistory = [];
+    
+    // LLM outcome counters
+    let llmSuccessCount = 0;
+    let llmFailureCount = 0;
+    
+    // Update the GUI counters for LLM outcomes.
+    function updateLLMCounters() {
+      document.getElementById("llmSuccess").textContent = "LLM Success: " + llmSuccessCount;
+      document.getElementById("llmFailure").textContent = "LLM Fail: " + llmFailureCount;
+    }
+    
+    /***********************
+     * Mood & Tone Functions & Response Prefix
+     ***********************/
+    function updateMood(user) {
+      let baseMood = user.baseMood || "calm";
+      let newMood = baseMood;
+      if (lastEventInfluence) {
+        newMood = (lastEventInfluence === "critical") ? "agitated" : "reflective";
+        lastEventInfluence = null;
+      } else if (Math.random() < 0.3) {
+        switch (environmentCondition) {
+          case "stormy":
+          case "hot":
+          case "windy": newMood = "agitated"; break;
+          case "rainy":
+          case "foggy":
+          case "cold":
+          case "snowy": newMood = "reflective"; break;
+          case "sunny":
+          case "clear": newMood = "calm"; break;
+          default: newMood = baseMood;
+        }
+      }
+      user.mood = newMood;
+      console.log(`${user.callSign} mood updated to ${user.mood} (Base: ${baseMood}, Env: ${environmentCondition})`);
+    }
+    function getMoodPrefix(mood) {
+      switch (mood) {
+        case "agitated": return "Quick update: ";
+        case "reflective": return "";
+        case "surprised": return "Whoa, ";
+        default: return "";
+      }
+    }
+    function getResponsePrefix(style, isDirectResponse = false) {
+      if (style === "formal") return "Roger";
+      else if (style === "casual") {
+        if (isDirectResponse) return "ten four";
+        return randomChoice(["Roger", "Copy", "Over"]);
+      } else {
+        return (Math.random() < 0.5) ? "Roger" : "ten four";
+      }
+    }
     
     /***********************
      * Global Radio Words & LLM Helper Functions
@@ -92,7 +157,6 @@
       "Maintain", "Execute", "Advise", "Ready", "Caution", "Alert", "Notify", "Observe", "Sync", "Align",
       "Shift", "Focus", "Delta", "Echo", "Foxtrot", "Zulu", "Sierra", "Tango", "Bravo", "Charlie"
     ];
-    
     function generateRandomRadioWordsHybrid() {
       const numWords = Math.floor(Math.random() * 2) + 2;
       const shuffled = radioWords.slice();
@@ -103,24 +167,24 @@
       return shuffled.slice(0, numWords).join(" ");
     }
     
-    // Updated to accept an optional topic.
+    // Save a message in the conversation history (up to 10 messages).
     function updateConversationHistory(newMessage, topic = null) {
       conversationHistory.push({ message: newMessage, topic: topic });
-      if (conversationHistory.length > 5) {
+      if (conversationHistory.length > 10) {
         conversationHistory.shift();
       }
     }
     
-    // Get a summarized history with topic tags (last 200 characters of combined text)
+    // Returns the last 1,000 characters of the conversation history.
     function getSummarizedHistory() {
       const historyStr = conversationHistory
         .map(item => item.topic ? `[${item.topic}] ${item.message}` : item.message)
         .join(" ");
-      return historyStr.slice(-200);
+      return historyStr.slice(-1000);
     }
     
     /***********************
-     * Additional Global Arrays (for Chain and Tone)
+     * Additional Dialogue Assets
      ***********************/
     const triggeredChainQueries = [
       "What's the urgent situation?",
@@ -134,7 +198,6 @@
       "There's a critical breakdown in the system.",
       "Urgent intervention may be required."
     ];
-    
     const unusualQueries = [
       "What exactly is unusual?",
       "Can you explain what seems off?",
@@ -151,7 +214,6 @@
       "Our sensors are throwing us a curveball.",
       "Maybe it's just a fleeting glitch."
     ];
-    
     const snarkyResponses = [
       "That update is as exciting as watching paint dry.",
       "Yawn... Everything's just as boring as usual.",
@@ -234,7 +296,6 @@
     /***********************
      * Helper Functions
      ***********************/
-    // Define triggerKeywords for checkForTrigger:
     const triggerKeywords = ["urgent", "alert", "critical"];
     function checkForTrigger(text) {
       const lower = text.toLowerCase();
@@ -245,46 +306,6 @@
       return lower.includes("unusual") || lower.includes("anomalous") ||
              lower.includes("erratic") || lower.includes("anomaly") ||
              lower.includes("odd");
-    }
-    
-    /***********************
-     * Mood & Tone Functions
-     ***********************/
-    function updateMood(user) {
-      let baseMood = user.baseMood || "calm";
-      let newMood = baseMood;
-      if (lastEventInfluence) {
-        newMood = (lastEventInfluence === "critical") ? "agitated" : "reflective";
-        lastEventInfluence = null;
-      } else if (Math.random() < 0.3) {
-        switch (environmentCondition) {
-          case "stormy":
-          case "hot":
-          case "windy": newMood = "agitated"; break;
-          case "rainy":
-          case "foggy":
-          case "cold":
-          case "snowy": newMood = "reflective"; break;
-          case "sunny":
-          case "clear": newMood = "calm"; break;
-          default: newMood = baseMood;
-        }
-      }
-      user.mood = newMood;
-      console.log(`${user.callSign} mood updated to ${user.mood} (Base: ${baseMood}, Env: ${environmentCondition})`);
-    }
-    function getMoodPrefix(mood) {
-      switch(mood) {
-        case "agitated": return "Quick update: ";
-        case "reflective": return "";
-        case "surprised": return "Whoa, ";
-        default: return "";
-      }
-    }
-    function getResponsePrefix(style) {
-      if (style === "formal") return "Roger";
-      else if (style === "casual") return "ten four";
-      else return (Math.random() < 0.5) ? "Roger" : "ten four";
     }
     
     /***********************
@@ -586,7 +607,7 @@
     const allScriptedEvents = scriptedEvents.concat(extraScriptedEvents);
     
     /***********************
-     * Voice Assignment
+     * Voice Assignment Functions
      ***********************/
     function assignPreferredVoices() {
       let platform = "unknown";
@@ -626,7 +647,7 @@
     }
     
     /***********************
-     * Scripted Dialogue Generation (Message Body Only)
+     * Scripted Dialogue Generation Functions
      ***********************/
     function generateStandardMessage(sender, forcedReceiver) {
       let style = (sender.style === "mixed")
@@ -639,7 +660,7 @@
         let opener = (Math.random() < 0.5)
           ? randomChoice(["In response,", "Regarding that,", "About that,"]) + " "
           : "";
-        let prefix = getResponsePrefix(style);
+        let prefix = getResponsePrefix(style, true);
         if (sender.callSign === "Alpha" && Math.random() < 0.2) {
           smallTalkCutMode = true;
           smallTalkCutUntil = Date.now() + 3 * 60 * 1000;
@@ -682,7 +703,7 @@
             banterChainCounter = 1;
             console.log("Banter chain triggered in forced message (casual).");
           }
-          return `${opener}${moodPrefix}${getResponsePrefix(style)}, ${starter} – ${remark}. Over.`;
+          return `${opener}${moodPrefix}${getResponsePrefix(style, true)}, ${starter} – ${remark}. Over.`;
         }
       } else {
         let isBroadcast = Math.random() < sender.broadcastChance;
@@ -720,8 +741,8 @@
             return `${moodPrefix}${starter} – ${remark}. Over.`;
           }
         } else {
-          let potentialReceivers = users.filter(u => u.callSign !== sender.callSign);
-          let receiver = randomChoice(potentialReceivers);
+          let potentialSenders = users.filter(u => u.callSign !== sender.callSign);
+          let receiver = randomChoice(potentialSenders);
           if (style === "formal") {
             let observation;
             if (Math.random() < 0.3) {
@@ -826,7 +847,7 @@
       let style = (sender.style === "mixed")
                   ? (Math.random() < 0.5 ? "formal" : "casual")
                   : sender.style;
-      let prefix = getResponsePrefix(style);
+      let prefix = getResponsePrefix(style, true);
       if (style === "formal") {
         let conditionRemark = getConditionRemark();
         if (conditionRemark !== "") { template += ", " + conditionRemark; }
@@ -883,19 +904,17 @@
     }
     
     /***********************
-     * LLM Functions for Hybrid Mode (Recursive Context)
+     * LLM Functions for Hybrid Mode
      ***********************/
     function generateMinimalPrompt(count) {
       let prompt = "";
       if (count % 12 === 0) {
         prompt += `${environmentCondition}, ${timeOfDay}. `;
       }
-      // Include summarized conversation history (last 200 characters)
       const historySnippet = conversationHistory.length > 0 ? getSummarizedHistory() : "";
       if (historySnippet) {
         prompt += `(${historySnippet}) `;
       }
-      // Also include a snippet from the previous message (first 40 characters)
       const prevSnippet = lastMessage ? lastMessage.message.slice(0, 40) : "";
       if (prevSnippet) {
         prompt += `[${prevSnippet}] `;
@@ -905,13 +924,10 @@
     }
     
     function cleanUpMessageHybrid(message) {
-      // Remove content within square brackets and extra spaces
+      // Remove content within square brackets, extra spaces, stray tokens, and URLs.
       message = message.replace(/\[.*?\]/g, "").replace(/\s+/g, " ").trim();
-      // Remove stray tokens like ~end~ or >>
       message = message.replace(/(~end~|>>)/g, "").trim();
-      // Remove any URLs
       message = message.replace(/https?:\/\/\S+/g, "").trim();
-      // Remove any trailing forbidden words ("a", "an", "and", "the", "they") with optional punctuation.
       while (/\s+(?:a|an|and|the|they)[\s\.,;:!?]*$/i.test(message)) {
         message = message.replace(/\s+(?:a|an|and|the|they)[\s\.,;:!?]*$/i, "");
       }
@@ -931,7 +947,6 @@
       const prompt = generateMinimalPrompt(count);
       console.log("LLM prompt:", prompt);
       try {
-        // Adjusted parameters for a bit more creativity and length:
         const results = await generator(prompt, { 
           max_length: 70,
           temperature: 0.4,
@@ -946,8 +961,9 @@
         if (!/[.!?]$/.test(candidate)) {
           candidate += ".";
         }
-        // Use fallback only if candidate is really short (<15 characters)
-        if (candidate.length < 15 || candidate.toLowerCase().includes("~end~")) {
+        // Relax fallback criteria: only fallback if candidate is extremely short (<5 characters)
+        let llmSuccess = true;
+        if (candidate.length < 5) {
           const fallbackMessages = [
             "All systems nominal.",
             "No anomalies detected.",
@@ -956,7 +972,9 @@
           ];
           candidate = randomChoice(fallbackMessages);
           console.log("Using fallback message:", candidate);
+          llmSuccess = false;
         }
+        // Clean up the candidate. This removes tokens like "~end~" rather than triggering fallback.
         candidate = cleanUpMessageHybrid(candidate);
         if (count % 12 === 0 && environmentCondition !== "clear" &&
             candidate.toLowerCase().indexOf(environmentCondition.toLowerCase()) === -1) {
@@ -964,9 +982,13 @@
         }
         console.log("Final candidate:", candidate);
         updateConversationHistory(candidate, activeConversation ? activeConversation.topic : null);
+        if (llmSuccess) { llmSuccessCount++; } else { llmFailureCount++; }
+        updateLLMCounters();
         return candidate;
       } catch (err) {
         console.error("LLM error:", err);
+        llmFailureCount++;
+        updateLLMCounters();
         return "Error generating message.";
       }
     }
@@ -1119,6 +1141,7 @@
       }
       
       transmissionCount++;
+      document.getElementById("txCount").textContent = "Transmission Count: " + transmissionCount;
       console.log("Transmission count:", transmissionCount);
       
       let sender, forcedReceiver = null;
@@ -1148,7 +1171,6 @@
       let broadcast = message.includes("to all units:");
       console.log("Generated message:", message);
       
-      // Format final output with a single prefix.
       const finalText = forcedReceiver
         ? `${sender.callSign} to ${forcedReceiver.callSign}: ${message}`
         : (broadcast ? `${sender.callSign} to all units: ${message}` : `${sender.callSign}: ${message}`);
@@ -1199,7 +1221,6 @@
         receiverObj = randomChoice(potentialReceivers);
       }
       
-      // Pass the active topic (if any) to the conversation history.
       updateConversationHistory(message, activeConversation ? activeConversation.topic : null);
       
       lastMessage = {
@@ -1215,11 +1236,8 @@
      * Post-Processing & Simulation Control
      ***********************/
     function cleanUpFinalMessage(text) {
-      // Remove duplicate speaker prefixes (e.g., "Bravo to Charlie: Bravo to Charlie:")
       text = text.replace(/(^[\w]+(?:\s+to\s+[\w]+:)\s*)\1+/i, "$1 ");
-      // Remove duplicate words in a row.
       text = text.replace(/\b(\w+)(\s+\1\b)+/gi, "$1");
-      // Trim stray punctuation and whitespace.
       text = text.replace(/^[\s:;,.]+/, "").replace(/[\s:;,.]+$/, "");
       return text;
     }
