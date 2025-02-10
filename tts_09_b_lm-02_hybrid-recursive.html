@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Spruced-Up Hybrid Radio Chatter Simulation (Tuned LLM)</title>
+  <title>Enhanced Context & Memory – Hybrid Radio Chatter Simulation</title>
   <style>
     body {
       font-family: monospace;
@@ -30,7 +30,7 @@
   </style>
 </head>
 <body>
-  <h1>Spruced-Up Hybrid Radio Chatter Simulation (Tuned LLM)</h1>
+  <h1>Enhanced Context & Memory – Hybrid Radio Chatter Simulation</h1>
   <div id="controls">
     <button id="startSim">Start Simulation</button>
     <button id="stopSim">Stop Simulation</button>
@@ -56,8 +56,8 @@
     let lfo = null;
     let availableVoices = [];
     let burstInterferenceTimer = null;
-    let lastMessage = null;             // Last message body (without speaker prefix)
-    let activeConversation = null;      // For chain responses
+    let lastMessage = null;             // Last message (object with { message, topic } – topic may be null)
+    let activeConversation = null;      // For chain responses (contains a topic)
     let environmentCondition = "clear";
     let lastEventInfluence = null;      // For mood updates
     let timeOfDay = "day";
@@ -79,7 +79,7 @@
     let transmissionCount = 0;
     let generator = null;
     
-    // Conversation history (sliding window of 2 messages)
+    // Conversation history: store up to 5 messages with optional topic tags
     let conversationHistory = [];
     
     /***********************
@@ -103,16 +103,20 @@
       return shuffled.slice(0, numWords).join(" ");
     }
     
-    function updateConversationHistory(newMessage) {
-      conversationHistory.push(newMessage);
-      if (conversationHistory.length > 2) {
+    // Updated to accept an optional topic.
+    function updateConversationHistory(newMessage, topic = null) {
+      conversationHistory.push({ message: newMessage, topic: topic });
+      if (conversationHistory.length > 5) {
         conversationHistory.shift();
       }
     }
     
-    function getRecursiveSnippet() {
-      if (conversationHistory.length === 0) return "";
-      return randomChoice(conversationHistory).slice(0, 40);
+    // Get a summarized history with topic tags (last 200 characters of combined text)
+    function getSummarizedHistory() {
+      const historyStr = conversationHistory
+        .map(item => item.topic ? `[${item.topic}] ${item.message}` : item.message)
+        .join(" ");
+      return historyStr.slice(-200);
     }
     
     /***********************
@@ -651,7 +655,6 @@
                           ? randomChoice(normalObservations)
                           : randomChoice(formalObservations);
           }
-          // Insert snark if update is normal
           if ((environmentCondition === "clear" || environmentCondition === "sunny") && Math.random() < 0.3) {
             observation = randomChoice(snarkyResponses);
           }
@@ -887,10 +890,12 @@
       if (count % 12 === 0) {
         prompt += `${environmentCondition}, ${timeOfDay}. `;
       }
-      const recursiveSnippet = getRecursiveSnippet();
-      if (recursiveSnippet) {
-        prompt += `(${recursiveSnippet}) `;
+      // Include summarized conversation history (last 200 characters)
+      const historySnippet = conversationHistory.length > 0 ? getSummarizedHistory() : "";
+      if (historySnippet) {
+        prompt += `(${historySnippet}) `;
       }
+      // Also include a snippet from the previous message (first 40 characters)
       const prevSnippet = lastMessage ? lastMessage.message.slice(0, 40) : "";
       if (prevSnippet) {
         prompt += `[${prevSnippet}] `;
@@ -926,21 +931,23 @@
       const prompt = generateMinimalPrompt(count);
       console.log("LLM prompt:", prompt);
       try {
-        // Tuned parameters for coherence and reduced repetition:
+        // Adjusted parameters for a bit more creativity and length:
         const results = await generator(prompt, { 
-          max_length: 50,
-          temperature: 0.35,
+          max_length: 70,
+          temperature: 0.4,
           top_p: 0.85,
           repetition_penalty: 2.0
         });
         let candidate = results[0].generated_text.trim();
+        console.log("Raw candidate:", candidate);
         if (candidate.startsWith(prompt)) {
           candidate = candidate.substring(prompt.length).trim();
         }
         if (!/[.!?]$/.test(candidate)) {
           candidate += ".";
         }
-        if (candidate.length < 30 || candidate.toLowerCase().includes("~end~")) {
+        // Use fallback only if candidate is really short (<15 characters)
+        if (candidate.length < 15 || candidate.toLowerCase().includes("~end~")) {
           const fallbackMessages = [
             "All systems nominal.",
             "No anomalies detected.",
@@ -948,6 +955,7 @@
             "Standby for further instructions."
           ];
           candidate = randomChoice(fallbackMessages);
+          console.log("Using fallback message:", candidate);
         }
         candidate = cleanUpMessageHybrid(candidate);
         if (count % 12 === 0 && environmentCondition !== "clear" &&
@@ -955,7 +963,7 @@
           candidate += ` (${environmentCondition} conditions)`;
         }
         console.log("Final candidate:", candidate);
-        updateConversationHistory(candidate);
+        updateConversationHistory(candidate, activeConversation ? activeConversation.topic : null);
         return candidate;
       } catch (err) {
         console.error("LLM error:", err);
@@ -1191,7 +1199,8 @@
         receiverObj = randomChoice(potentialReceivers);
       }
       
-      updateConversationHistory(message);
+      // Pass the active topic (if any) to the conversation history.
+      updateConversationHistory(message, activeConversation ? activeConversation.topic : null);
       
       lastMessage = {
         sender: sender,
