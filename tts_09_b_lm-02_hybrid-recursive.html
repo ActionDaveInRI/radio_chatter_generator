@@ -175,14 +175,6 @@
       }
     }
     
-    // Returns the last 1,000 characters of the conversation history.
-    function getSummarizedHistory() {
-      const historyStr = conversationHistory
-        .map(item => item.topic ? `[${item.topic}] ${item.message}` : item.message)
-        .join(" ");
-      return historyStr.slice(-1000);
-    }
-    
     /***********************
      * Additional Dialogue Assets
      ***********************/
@@ -906,21 +898,20 @@
     /***********************
      * LLM Functions for Hybrid Mode
      ***********************/
+    // Revised prompt generator: limit history to last 200 characters and omit duplicate snippets.
     function generateMinimalPrompt(count) {
-      let prompt = "";
+      let parts = [];
       if (count % 12 === 0) {
-        prompt += `${environmentCondition}, ${timeOfDay}. `;
+        parts.push(`${environmentCondition}, ${timeOfDay}.`);
       }
-      const historySnippet = conversationHistory.length > 0 ? getSummarizedHistory() : "";
-      if (historySnippet) {
-        prompt += `(${historySnippet}) `;
+      if (conversationHistory.length > 0) {
+        // Combine messages and take only the last 200 characters.
+        const fullHistory = conversationHistory.map(item => item.message).join(" ");
+        let snippet = fullHistory.slice(-200);
+        parts.push(`(${snippet})`);
       }
-      const prevSnippet = lastMessage ? lastMessage.message.slice(0, 40) : "";
-      if (prevSnippet) {
-        prompt += `[${prevSnippet}] `;
-      }
-      prompt += generateRandomRadioWordsHybrid();
-      return prompt;
+      parts.push(generateRandomRadioWordsHybrid());
+      return parts.join(" ");
     }
     
     function cleanUpMessageHybrid(message) {
@@ -943,54 +934,66 @@
       }
     }
     
+    // Revised generateLLMMessage function with increased length, min_length and retry loop.
     async function generateLLMMessage(sender, forcedReceiver, count) {
       const prompt = generateMinimalPrompt(count);
       console.log("LLM prompt:", prompt);
-      try {
-        const results = await generator(prompt, { 
-          max_length: 70,
-          temperature: 0.4,
-          top_p: 0.85,
-          repetition_penalty: 2.0
-        });
-        let candidate = results[0].generated_text.trim();
-        console.log("Raw candidate:", candidate);
-        if (candidate.startsWith(prompt)) {
-          candidate = candidate.substring(prompt.length).trim();
+      let candidate = "";
+      let attempts = 0;
+      const maxAttempts = 3;
+      let llmSuccess = true;
+  
+      while (attempts < maxAttempts) {
+        try {
+          const results = await generator(prompt, { 
+            max_length: 100,    // Increased maximum length for a longer response
+            min_length: 30,     // Request a minimum length (if supported)
+            temperature: 0.4,
+            top_p: 0.85,
+            repetition_penalty: 2.0
+          });
+          candidate = results[0].generated_text.trim();
+          console.log("Raw candidate:", candidate);
+          if (candidate.startsWith(prompt)) {
+            candidate = candidate.substring(prompt.length).trim();
+          }
+          if (!/[.!?]$/.test(candidate)) {
+            candidate += ".";
+          }
+          // Accept candidate if it is long enough.
+          if (candidate.length >= 5) {
+            break;
+          }
+        } catch (err) {
+          console.error("LLM error on attempt", attempts + 1, ":", err);
         }
-        if (!/[.!?]$/.test(candidate)) {
-          candidate += ".";
-        }
-        // Relax fallback criteria: only fallback if candidate is extremely short (<5 characters)
-        let llmSuccess = true;
-        if (candidate.length < 5) {
-          const fallbackMessages = [
-            "All systems nominal.",
-            "No anomalies detected.",
-            "Routine check complete.",
-            "Standby for further instructions."
-          ];
-          candidate = randomChoice(fallbackMessages);
-          console.log("Using fallback message:", candidate);
-          llmSuccess = false;
-        }
-        // Clean up the candidate. This removes tokens like "~end~" rather than triggering fallback.
-        candidate = cleanUpMessageHybrid(candidate);
-        if (count % 12 === 0 && environmentCondition !== "clear" &&
-            candidate.toLowerCase().indexOf(environmentCondition.toLowerCase()) === -1) {
-          candidate += ` (${environmentCondition} conditions)`;
-        }
-        console.log("Final candidate:", candidate);
-        updateConversationHistory(candidate, activeConversation ? activeConversation.topic : null);
-        if (llmSuccess) { llmSuccessCount++; } else { llmFailureCount++; }
-        updateLLMCounters();
-        return candidate;
-      } catch (err) {
-        console.error("LLM error:", err);
-        llmFailureCount++;
-        updateLLMCounters();
-        return "Error generating message.";
+        attempts++;
       }
+  
+      // If candidate is still too short after retries, fallback to preset messages.
+      if (candidate.length < 5) {
+        const fallbackMessages = [
+          "All systems nominal.",
+          "No anomalies detected.",
+          "Routine check complete.",
+          "Standby for further instructions."
+        ];
+        candidate = randomChoice(fallbackMessages);
+        console.log("Using fallback message:", candidate);
+        llmSuccess = false;
+      }
+  
+      candidate = cleanUpMessageHybrid(candidate);
+      if (count % 12 === 0 && environmentCondition !== "clear" &&
+          candidate.toLowerCase().indexOf(environmentCondition.toLowerCase()) === -1) {
+        candidate += ` (${environmentCondition} conditions)`;
+      }
+      console.log("Final candidate:", candidate);
+  
+      updateConversationHistory(candidate, activeConversation ? activeConversation.topic : null);
+      if (llmSuccess) { llmSuccessCount++; } else { llmFailureCount++; }
+      updateLLMCounters();
+      return candidate;
     }
     
     /***********************
