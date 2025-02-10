@@ -202,17 +202,16 @@
       }
     }
 
-    // Array of 50 radio-related words.
+    // Modified array of 50 radio-related words.
     const radioWords = [
-      "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India", "Juliet",
-      "Kilo", "Lima", "Mike", "November", "Oscar", "Papa", "Quebec", "Romeo", "Sierra", "Tango",
-      "Uniform", "Victor", "Whiskey", "X-ray", "Yankee", "Zulu", "Roger", "Copy", "Over", "Out",
-      "Standby", "Confirm", "Affirmative", "Negative", "Patrol", "Dispatch", "Report",
-      "Brief", "Check", "Secure", "Control", "Monitor", "Notify", "Transmit", "Receive", "Rendezvous",
-      "Coordinate"
+      "Copy", "Roger", "Over", "Out", "Standby", "Affirmative", "Negative", "Check", "Brief", "Dispatch",
+      "Patrol", "Secure", "Control", "Monitor", "Report", "Update", "Confirm", "Rendezvous", "Coordinate", "Tally",
+      "Status", "Proceed", "Halt", "Reset", "Regroup", "EnRoute", "Vantage", "Clarity", "Command", "Initiate",
+      "Maintain", "Execute", "Advise", "Ready", "Caution", "Alert", "Notify", "Observe", "Sync", "Align",
+      "Shift", "Focus", "Delta", "Echo", "Foxtrot", "Zulu", "Sierra", "Tango", "Bravo", "Charlie"
     ];
 
-    // Randomly choose 2-3 words from the array.
+    // Randomly choose 2-3 words from the radioWords array.
     function generateRandomRadioWords() {
       const numWords = Math.floor(Math.random() * 2) + 2; // 2 or 3 words
       const shuffled = radioWords.slice();
@@ -223,40 +222,63 @@
       return shuffled.slice(0, numWords).join(" ");
     }
 
+    // Optionally extract a snippet from the previous transmission.
+    function getPreviousSnippet(previousTransmission) {
+      if (!previousTransmission) return "";
+      const words = previousTransmission.split(/\s+/);
+      const filtered = words.filter(w => !/^(the|I|a|an|first|time|saw)$/i.test(w));
+      if (filtered.length < 5) return "";
+      const seqLength = Math.floor(Math.random() * 3) + 3; // 3 to 5 words
+      const startIndex = Math.floor(Math.random() * (filtered.length - seqLength));
+      const sequence = filtered.slice(startIndex, startIndex + seqLength);
+      let randIndices = [];
+      while (randIndices.length < 2 && sequence.length >= 2) {
+        let idx = Math.floor(Math.random() * sequence.length);
+        if (!randIndices.includes(idx)) randIndices.push(idx);
+      }
+      randIndices.sort(() => Math.random() - 0.5);
+      const randomWords = randIndices.map(i => sequence[i]);
+      return sequence.join(" ") + " / " + randomWords.join(" ");
+    }
+
     // Minimal prompt generator.
     function generateMinimalPrompt(count) {
       let prompt = "";
-      // Every 12th prompt, include a tiny weather/time tag.
+      // Every 12th prompt, include a brief weather/time tag.
       if (count % 12 === 0) {
         prompt += `${environmentCondition}, ${timeOfDay}. `;
       }
+      // Optionally include a snippet from the previous transmission.
+      const snippet = getPreviousSnippet(lastMessage ? lastMessage.message : "");
+      if (snippet) {
+        prompt += `(${snippet}) `;
+      }
       // Append a random 2-3 word radio phrase.
       prompt += generateRandomRadioWords();
-      // Final delimiter; chosen to have little meaning to GPT‑2.
-      prompt += " ~";
+      // (No final delimiter added now.)
       return prompt;
     }
 
     // Clean up generated messages.
     function cleanUpMessage(message) {
       message = message.replace(/\[.*?\]/g, "").replace(/\s+/g, " ").trim();
-      // Remove common stray delimiters.
-      message = message.replace(/(~|>>)/g, "").trim();
-      // Remove URLs if any.
+      // Remove stray delimiters if present.
+      message = message.replace(/(~end~|>>)/g, "").trim();
+      // Remove URLs.
       message = message.replace(/https?:\/\/\S+/g, "").trim();
       return message;
     }
 
-    // Generate a transmission message using our minimal prompt.
+    // Generate a transmission message using the minimal prompt.
     async function generateLLMMessage(sender, forcedReceiver, count) {
       const prompt = generateMinimalPrompt(count);
       console.log("LLM prompt:", prompt);
       try {
         const results = await generator(prompt, { 
-          max_length: 60,         // Shorter output for concise transmissions.
-          temperature: 0.45,      // Lower temperature for even more concise output.
+          max_length: 40,         // Short output for concise transmissions.
+          temperature: 0.4,       // Lower temperature for more deterministic output.
           top_p: 0.9, 
-          repetition_penalty: 1.3
+          repetition_penalty: 1.5 // Increased repetition penalty.
         });
         console.log("Raw GPT‑2 results:");
         console.dir(results);
@@ -272,7 +294,7 @@
           candidate += ".";
         }
         // Fallback if output is too short or contains artifacts.
-        if (candidate.length < 30 || candidate.toLowerCase().includes("~")) {
+        if (candidate.length < 30 || candidate.toLowerCase().includes("~end~")) {
           console.warn("Candidate too trivial; using fallback.");
           const fallbackMessages = [
             "All systems nominal.",
@@ -283,7 +305,7 @@
           candidate = fallbackMessages[Math.floor(Math.random() * fallbackMessages.length)];
         }
         candidate = cleanUpMessage(candidate);
-        // If weather was included in the prompt, append a tiny note.
+        // If weather was included, append a tiny note.
         if (count % 12 === 0 && environmentCondition !== "clear" &&
             candidate.toLowerCase().indexOf(environmentCondition.toLowerCase()) === -1) {
           candidate += ` (${environmentCondition} conditions)`;
