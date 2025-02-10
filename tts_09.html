@@ -22,7 +22,7 @@
     #log p { margin: 5px 0; }
     #status { text-align: center; margin-top: 10px; font-style: italic; }
     .control-label { margin-right: 10px; }
-    /* New styles for specific characters in the on-screen log */
+    /* Custom colors for specific characters */
     .log-Alpha { color: cyan; }
     .log-Bravo { color: #FFBF00; }
   </style>
@@ -76,23 +76,25 @@
     /***********************
      * Template Arrays for Chains
      ***********************/
-    // Unusual chain templates (for formal messages that report anomalies)
+    // Unusual chain templates – expanded with additional assets.
     const unusualQueries = [
       "What exactly is unusual?",
       "Can you explain what seems off?",
       "What do you mean by unusual?",
       "Why do you say it's unusual?",
-      "Could you clarify what’s abnormal?"
+      "What on earth is off about that?",
+      "Is that really out of the ordinary?"
     ];
     const unusualExplanations = [
       "It appears there are some anomalies.",
       "There are signals that don't match our normal readings.",
       "The data seems irregular.",
       "There is a deviation from the norm.",
-      "Our sensors report an unexpected variance."
+      "Our sensors are throwing us a curveball.",
+      "Maybe it's just a fleeting glitch."
     ];
     
-    // Triggered chain templates (for urgent trigger words)
+    // Triggered chain templates for urgent triggers.
     const triggeredChainQueries = [
       "What's the urgent situation?",
       "What is the emergency exactly?",
@@ -106,7 +108,7 @@
       "Urgent intervention may be required."
     ];
     
-    // Banter chain templates (for casual, amusing replies)
+    // Banter chain templates for casual, amusing replies.
     const banterChainQueries = [
       "Really? That's hilarious—what happened next?",
       "Are you serious? Tell me more!",
@@ -308,6 +310,7 @@
     ];
     const allUnscriptedAssets = unscriptedMessages.concat(extraUnscripted, complaints, updates);
     
+    // Expanded conversation topics.
     const conversationTopics = {
       weather: {
         initial: [
@@ -498,6 +501,27 @@
           "The enthusiasm is contagious, isn't it?",
           "We should celebrate this surge in morale."
         ]
+      },
+      // New casual topic: "chitchat"
+      chitchat: {
+        initial: [
+          "Hey, what's up?",
+          "Just checking in—how's everyone doing?",
+          "Anyone got any fun news?"
+        ],
+        branchA: [
+          "I've been wondering, what's new with you all?",
+          "Any interesting stories today?"
+        ],
+        branchB: [
+          "I had the weirdest experience on my way here.",
+          "Sometimes it's good to just chat about nothing in particular."
+        ],
+        chain: [
+          "Just sharing some thoughts here.",
+          "It's the little things that make the day interesting.",
+          "Sometimes, casual chit-chat is all you need."
+        ]
       }
     };
     
@@ -529,9 +553,22 @@
       
       users.forEach((user, index) => {
         let voice = null;
-        if (platform === "ios") { voice = availableVoices.find(v => v.name === "Samantha"); }
-        else if (platform === "android") { voice = availableVoices.find(v => v.name.includes("Google")); }
-        else if (platform === "mac") { voice = availableVoices.find(v => v.name === "Alex") || availableVoices.find(v => v.name === "Samantha"); }
+        if (platform === "ios") {
+          // Instead of always choosing "Samantha", filter for all English voices.
+          let iosVoices = availableVoices.filter(v => v.lang.startsWith("en"));
+          if (iosVoices.length > 0) {
+            // Assign voices in round-robin fashion.
+            voice = iosVoices[index % iosVoices.length];
+          } else {
+            voice = availableVoices[index % availableVoices.length];
+          }
+        } else if (platform === "android") {
+          // Use voices that include "Google"
+          voice = availableVoices.find(v => v.name.includes("Google"));
+        } else if (platform === "mac") {
+          // On mac, try "Alex" or "Samantha"
+          voice = availableVoices.find(v => v.name === "Alex") || availableVoices.find(v => v.name === "Samantha");
+        }
         if (!voice) { voice = availableVoices[index % availableVoices.length]; }
         user.voice = voice;
         console.log(`Assigned ${user.callSign} voice: ${user.voice.name}`);
@@ -662,7 +699,7 @@
     }
     
     function generateConversationChainMessage(sender, forcedReceiver) {
-      // Initialize activeConversation if it's null.
+      // Initialize activeConversation if needed.
       if (!activeConversation) {
         activeConversation = {
           topic: randomChoice(Object.keys(conversationTopics)),
@@ -767,11 +804,12 @@
     }
     
     /***********************
-     * Audio & Interference Functions (Unchanged)
+     * Audio & Interference Functions
      ***********************/
     function playCharacterNoise(user) {
       if (!audioCtx) { const AudioContext = window.AudioContext || window.webkitAudioContext; audioCtx = new AudioContext(); }
-      const duration = 5, sampleRate = audioCtx.sampleRate, bufferSize = sampleRate * duration;
+      // Increase the duration to 10 seconds to help avoid gaps on iOS.
+      const duration = 10, sampleRate = audioCtx.sampleRate, bufferSize = sampleRate * duration;
       const noiseBuffer = audioCtx.createBuffer(1, bufferSize, sampleRate);
       const data = noiseBuffer.getChannelData(0);
       for (let i = 0; i < bufferSize; i++) { data[i] = Math.random() * 2 - 1; }
@@ -785,7 +823,9 @@
       else { filter.type = "bandpass"; filter.frequency.setValueAtTime(1000, audioCtx.currentTime); }
       const gainNode = audioCtx.createGain();
       gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
-      noiseSource.connect(filter); filter.connect(gainNode); gainNode.connect(audioCtx.destination);
+      noiseSource.connect(filter);
+      filter.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
       noiseSource.start();
       return noiseSource;
     }
@@ -795,7 +835,8 @@
       const blipOsc = audioCtx.createOscillator(), blipGain = audioCtx.createGain();
       blipOsc.frequency.setValueAtTime(1200, audioCtx.currentTime);
       blipGain.gain.setValueAtTime(0.2, audioCtx.currentTime);
-      blipOsc.connect(blipGain); blipGain.connect(audioCtx.destination);
+      blipOsc.connect(blipGain);
+      blipGain.connect(audioCtx.destination);
       blipOsc.start();
       blipGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
       blipOsc.stop(audioCtx.currentTime + 0.15);
@@ -803,30 +844,48 @@
     
     function startInterference() {
       if (!audioCtx) { const AudioContext = window.AudioContext || window.webkitAudioContext; audioCtx = new AudioContext(); }
-      const sampleRate = audioCtx.sampleRate, bufferSize = sampleRate * 2;
+      // Increase noise buffer duration to 10 seconds for longer continuous noise.
+      const sampleRate = audioCtx.sampleRate, bufferSize = sampleRate * 10;
       const noiseBuffer = audioCtx.createBuffer(1, bufferSize, sampleRate);
       const output = noiseBuffer.getChannelData(0);
       for (let i = 0; i < bufferSize; i++) { output[i] = Math.random() * 2 - 1; }
       basicNoiseSource = audioCtx.createBufferSource();
-      basicNoiseSource.buffer = noiseBuffer; basicNoiseSource.loop = true;
+      basicNoiseSource.buffer = noiseBuffer;
+      basicNoiseSource.loop = true;
       const basicFilter = audioCtx.createBiquadFilter();
-      basicFilter.type = "bandpass"; basicFilter.frequency.setValueAtTime(3000, audioCtx.currentTime); basicFilter.Q.setValueAtTime(1, audioCtx.currentTime);
-      const basicGain = audioCtx.createGain(); basicGain.gain.setValueAtTime(0.08, audioCtx.currentTime);
-      basicNoiseSource.connect(basicFilter); basicFilter.connect(basicGain); basicGain.connect(audioCtx.destination);
+      basicFilter.type = "bandpass";
+      basicFilter.frequency.setValueAtTime(3000, audioCtx.currentTime);
+      basicFilter.Q.setValueAtTime(1, audioCtx.currentTime);
+      const basicGain = audioCtx.createGain();
+      basicGain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+      basicNoiseSource.connect(basicFilter);
+      basicFilter.connect(basicGain);
+      basicGain.connect(audioCtx.destination);
       basicNoiseSource.start();
       
       advancedNoiseSource = audioCtx.createBufferSource();
-      advancedNoiseSource.buffer = noiseBuffer; advancedNoiseSource.loop = true;
+      advancedNoiseSource.buffer = noiseBuffer;
+      advancedNoiseSource.loop = true;
       const advancedFilter = audioCtx.createBiquadFilter();
-      advancedFilter.type = "bandpass"; advancedFilter.frequency.setValueAtTime(2500, audioCtx.currentTime); advancedFilter.Q.setValueAtTime(1.5, audioCtx.currentTime);
-      const advancedGain = audioCtx.createGain(); advancedGain.gain.setValueAtTime(0.05, audioCtx.currentTime);
-      lfo = audioCtx.createOscillator(); lfo.frequency.setValueAtTime(0.5, audioCtx.currentTime);
-      const lfoGain = audioCtx.createGain(); lfoGain.gain.setValueAtTime(0.03, audioCtx.currentTime);
+      advancedFilter.type = "bandpass";
+      advancedFilter.frequency.setValueAtTime(2500, audioCtx.currentTime);
+      advancedFilter.Q.setValueAtTime(1.5, audioCtx.currentTime);
+      const advancedGain = audioCtx.createGain();
+      advancedGain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+      lfo = audioCtx.createOscillator();
+      lfo.frequency.setValueAtTime(0.5, audioCtx.currentTime);
+      const lfoGain = audioCtx.createGain();
+      lfoGain.gain.setValueAtTime(0.03, audioCtx.currentTime);
       const nonLinearShaper = audioCtx.createWaveShaper();
-      nonLinearShaper.curve = makeNonlinearCurve(3); nonLinearShaper.oversample = '4x';
-      lfo.connect(lfoGain); lfoGain.connect(nonLinearShaper); nonLinearShaper.connect(advancedGain.gain);
+      nonLinearShaper.curve = makeNonlinearCurve(3);
+      nonLinearShaper.oversample = '4x';
+      lfo.connect(lfoGain);
+      lfoGain.connect(nonLinearShaper);
+      nonLinearShaper.connect(advancedGain.gain);
       lfo.start();
-      advancedNoiseSource.connect(advancedFilter); advancedFilter.connect(advancedGain); advancedGain.connect(audioCtx.destination);
+      advancedNoiseSource.connect(advancedFilter);
+      advancedFilter.connect(advancedGain);
+      advancedGain.connect(audioCtx.destination);
       advancedNoiseSource.start();
     }
     
@@ -842,9 +901,13 @@
       burstGain.gain.setValueAtTime(0.2, audioCtx.currentTime);
       burstGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + burstDuration);
       const burstFilter = audioCtx.createBiquadFilter();
-      burstFilter.type = "highpass"; burstFilter.frequency.setValueAtTime(2000, audioCtx.currentTime);
-      burstSource.connect(burstFilter); burstFilter.connect(burstGain); burstGain.connect(audioCtx.destination);
-      burstSource.start(); burstSource.stop(audioCtx.currentTime + burstDuration);
+      burstFilter.type = "highpass";
+      burstFilter.frequency.setValueAtTime(2000, audioCtx.currentTime);
+      burstSource.connect(burstFilter);
+      burstFilter.connect(burstGain);
+      burstGain.connect(audioCtx.destination);
+      burstSource.start();
+      burstSource.stop(audioCtx.currentTime + burstDuration);
     }
     
     function scheduleBurstInterference() {
@@ -864,7 +927,11 @@
       const voices = window.speechSynthesis.getVoices();
       if (voices.length === 0) {
         updateStatus("Loading voices...");
-        window.speechSynthesis.onvoiceschanged = () => { assignUserVoices(); updateStatus("Voices loaded. Starting simulation..."); simulateTransmission(); };
+        window.speechSynthesis.onvoiceschanged = () => {
+          assignUserVoices();
+          updateStatus("Voices loaded. Starting simulation...");
+          simulateTransmission();
+        };
       } else {
         assignUserVoices();
         updateStatus("Voices loaded. Starting simulation...");
@@ -954,12 +1021,9 @@
       const logDiv = document.getElementById('log');
       const p = document.createElement('p');
       p.textContent = message;
-      // Set the text color based on the sender's call sign:
-      if (sender.callSign === "Alpha") {
-        p.classList.add("log-Alpha");
-      } else if (sender.callSign === "Bravo") {
-        p.classList.add("log-Bravo");
-      }
+      // Apply custom text colors based on sender.
+      if (sender.callSign === "Alpha") { p.classList.add("log-Alpha"); }
+      else if (sender.callSign === "Bravo") { p.classList.add("log-Bravo"); }
       logDiv.appendChild(p);
       logDiv.scrollTop = logDiv.scrollHeight;
       
@@ -993,7 +1057,10 @@
       let receiverObj;
       if (forcedReceiver) { receiverObj = forcedReceiver; }
       else if (broadcast) { receiverObj = { callSign: "all units" }; }
-      else { let potentialReceivers = users.filter(u => u.callSign !== sender.callSign); receiverObj = randomChoice(potentialReceivers); }
+      else {
+        let potentialReceivers = users.filter(u => u.callSign !== sender.callSign);
+        receiverObj = randomChoice(potentialReceivers);
+      }
       
       lastMessage = {
         sender: sender,
