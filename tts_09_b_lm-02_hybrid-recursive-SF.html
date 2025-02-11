@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Futuristic Spaceflight – Hybrid Radio Chatter Simulation</title>
+  <style>
+    /* Retro console styling */
+    body {
+      font-family: monospace;
+      background-color: #111;
+      color: #0f0;
+      padding: 20px;
+    }
+    h1 { text-align: center; margin-bottom: 20px; }
+    #controls { text-align: center; margin-bottom: 20px; }
+    button, input[type="range"] {
+      padding: 10px 15px;
+      margin: 5px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    #log {
+      border: 1px solid #0f0;
+      padding: 10px;
+      height: 300px;
+      overflow-y: auto;
+      background-color: #000;
+    }
+    #log p { margin: 5px 0; }
+    /* Display areas for status and counters */
+    #status, #txCount, #llmSuccess, #llmFailure {
+      text-align: center;
+      margin-top: 10px;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <h1>Futuristic Spaceflight – Hybrid Radio Chatter Simulation</h1>
+  <div id="controls">
+    <button id="startSim">Start Simulation</button>
+    <button id="stopSim">Stop Simulation</button>
+    <button id="clearLog">Clear Log</button>
+    <label for="delayMultiplier">Delay Multiplier:</label>
+    <input type="range" id="delayMultiplier" min="0.5" max="3.0" step="0.1" value="1.0">
+    <span id="multiplierValue">1.0</span>
+  </div>
+  <div id="log"></div>
+  <div id="status"></div>
+  <div id="txCount">Transmission Count: 0</div>
+  <div id="llmSuccess">LLM Success: 0</div>
+  <div id="llmFailure">LLM Fail: 0</div>
+
+  <!-- This module requires serving via HTTP -->
+  <script type="module">
+    // Import the transformers pipeline for text generation.
+    import { pipeline } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@latest/dist/transformers.min.js';
+
+    /***********************
+     * GLOBAL VARIABLES
+     ***********************/
+    let simulationRunning = false;
+    let audioCtx;
+    let basicNoiseSource = null;
+    let advancedNoiseSource = null;
+    let lfo = null;
+    let availableVoices = [];
+    let burstInterferenceTimer = null;
+    let lastMessage = null;             // { message, topic }
+    let activeConversation = null;      // For chain responses (with topic)
+    // In this simulation, "environment" represents cosmic phenomena.
+    let environmentCondition = "clear"; 
+    let lastEventInfluence = null;
+    // Simulated operational cycle ("day" or "night")
+    let timeOfDay = "day";
+
+    // Dialogue chain globals
+    let unusualChainState = null;       // "query" or "explanation"
+    let triggeredChain = false;
+    let chainCounter = 0;
+    const maxChainDepth = 3;
+    let banterChainActive = false;
+    let banterChainCounter = 0;
+    const maxBanterChainDepth = 3;
+
+    // Small talk cut mode
+    let smallTalkCutMode = false;
+    let smallTalkCutUntil = 0;
+
+    // Hybrid mode: every third transmission uses LLM-based generation.
+    let transmissionCount = 0;
+    let generator = null;
+
+    // Conversation history (store up to 10 messages)
+    let conversationHistory = [];
+
+    // LLM outcome counters
+    let llmSuccessCount = 0;
+    let llmFailureCount = 0;
+    function updateLLMCounters() {
+      document.getElementById("llmSuccess").textContent = "LLM Success: " + llmSuccessCount;
+      document.getElementById("llmFailure").textContent = "LLM Fail: " + llmFailureCount;
+    }
+
+    /***********************
+     * STATUS UPDATE FUNCTION
+     ***********************/
+    function updateStatus(message) {
+      document.getElementById("status").textContent = message;
+    }
+
+    /***********************
+     * MOOD & TONE / RESPONSE PREFIX FUNCTIONS
+     ***********************/
+    function updateMood(user) {
+      const baseMood = user.baseMood || "calm";
+      let newMood = baseMood;
+      if (lastEventInfluence) {
+        newMood = (lastEventInfluence === "critical") ? "agitated" : "reflective";
+        lastEventInfluence = null;
+      } else if (Math.random() < 0.3) {
+        switch (environmentCondition) {
+          case "radiation spike":
+          case "solar flare":
+            newMood = "agitated";
+            break;
+          case "nebula drift":
+          case "asteroid field":
+            newMood = "reflective";
+            break;
+          case "clear":
+          case "calm":
+            newMood = "calm";
+            break;
+          default:
+            newMood = baseMood;
+        }
+      }
+      user.mood = newMood;
+      console.log(`${user.callSign} mood updated to ${user.mood} (Base: ${baseMood}, Env: ${environmentCondition})`);
+    }
+    function getMoodPrefix(mood) {
+      switch (mood) {
+        case "agitated": return "Alert: ";
+        case "reflective": return "";
+        case "surprised": return "Intriguing, ";
+        default: return "";
+      }
+    }
+    function getResponsePrefix(style, isDirectResponse = false) {
+      if (style === "formal") return "Affirmative";
+      else if (style === "casual") {
+        return isDirectResponse ? "Copy that" : randomChoice(["Affirmative", "Copy", "Roger"]);
+      } else {
+        return (Math.random() < 0.5) ? "Affirmative" : "Copy that";
+      }
+    }
+
+    /***********************
+     * GLOBAL RADIO WORDS & LLM HELPER FUNCTIONS
+     ***********************/
+    const radioWords = [
+      "Copy", "Affirmative", "Over", "Out", "Standby", "Acknowledged", "Negative", "Check", "Brief", "Dispatch",
+      "Orbit", "Dock", "Course", "Monitor", "Report", "Update", "Confirm", "Rendezvous", "Coordinate", "Tally",
+      "Status", "Proceed", "Halt", "Reset", "Regroup", "EnRoute", "Vector", "Clarity", "Command", "Initiate",
+      "Maintain", "Execute", "Advise", "Ready", "Caution", "Alert", "Notify", "Observe", "Sync", "Align",
+      "Shift", "Focus", "Delta", "Echo", "Foxtrot", "Zulu", "Sierra", "Tango", "Bravo", "Charlie"
+    ];
+    function generateRandomRadioWordsHybrid() {
+      const numWords = Math.floor(Math.random() * 2) + 2;
+      const shuffled = radioWords.slice();
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      return shuffled.slice(0, numWords).join(" ");
+    }
+
+    /***********************
+     * CONVERSATION HISTORY FUNCTIONS
+     ***********************/
+    function updateConversationHistory(newMessage, topic = null) {
+      conversationHistory.push({ message: newMessage, topic: topic });
+      if (conversationHistory.length > 10) {
+        conversationHistory.shift();
+      }
+    }
+
+    /***********************
+     * DIALOGUE ASSETS (FUTURISTIC)
+     ***********************/
+    // Formal observations
+    const formalObservations = [
+      "our sensors indicate anomalous cosmic activity",
+      "scanners confirm irregular energy readings",
+      "communications reveal unexpected data bursts",
+      "our instruments detect unusual spectral signatures",
+      "recon scans suggest a deviation in the cosmic field"
+    ];
+    const extraFormalObservations = [
+      "recent diagnostics suggest subtle fluctuations in our sensor array",
+      "scanners are picking up atypical gravitational waves",
+      "the latest readings hint at hyperspace instabilities",
+      "preliminary reports indicate deviations in our navigation matrix"
+    ];
+    const normalObservations = [
+      "all systems are operating within normal parameters",
+      "engines and shields are stable",
+      "navigation is on course",
+      "routine diagnostics confirm stable conditions"
+    ];
+    // Banter and casual chatter
+    const banterStarters = ["Commander", "Pilot", "Lieutenant", "Crew", "Attention"];
+    const banterRemarks = [
+      "there's a strange blip on the radar",
+      "the void is acting up",
+      "our scanners are picking up odd signals",
+      "there's something fishy in deep space",
+      "the readings are off-kilter"
+    ];
+    const extraBanter = [
+      "This is one for the history logs!",
+      "Absolutely stellar!",
+      "Mind-blowing, truly!",
+      "That’s beyond normal!"
+    ];
+    // Unscripted remarks
+    const unscriptedMessages = [
+      "This flight is getting surreal.",
+      "I don't even know what the sensors are showing.",
+      "The cosmos is playing tricks on us.",
+      "Something out there defies explanation.",
+      "Deep space always has surprises."
+    ];
+    const extraUnscripted = [
+      "I'm lost in the void.",
+      "These readings defy logic.",
+      "The stars are whispering secrets."
+    ];
+    // Complaints and updates
+    const complaints = [
+      "Our hyperdrive is acting up again.",
+      "The ship's systems are glitching.",
+      "Diagnostics indicate a fault in the engine core."
+    ];
+    const updates = [
+      "Diagnostics complete, systems nominal.",
+      "All shipboard systems are operational.",
+      "Routine checks confirm stability."
+    ];
+    const allUnscriptedAssets = unscriptedMessages.concat(extraUnscripted, complaints, updates);
+
+    // Conversation topics for various themes
+    const conversationTopics = {
+      cosmic: {
+        initial: [
+          "Cosmic radiation levels are fluctuating wildly—scanners detect bursts of energy.",
+          "The starfield appears unusually active with sporadic cosmic flares."
+        ],
+        branchA: [
+          "It seems a nearby nebula is disrupting our sensors.",
+          "A solar flare might be affecting our readings."
+        ],
+        branchB: [
+          "Despite the irregularities, our systems remain stable.",
+          "The cosmic environment is unpredictable but within tolerable limits."
+        ],
+        chain: [
+          "The cosmic conditions are intensifying, with mounting energy surges.",
+          "Scanners report escalating radiation levels across the sector.",
+          "We’re experiencing unprecedented stellar activity."
+        ]
+      },
+      systems: {
+        initial: [
+          "Our ship's systems are acting up; the sensor array is throwing erratic data.",
+          "Diagnostics reveal disturbances in the engine core."
+        ],
+        branchA: [
+          "Perhaps we should run a quick systems check on the reactor.",
+          "A recalibration of the power grid might be in order."
+        ],
+        branchB: [
+          "Has anyone else noticed glitches in their diagnostic readouts?",
+          "System anomalies are being reported across multiple modules."
+        ],
+        chain: [
+          "Interference in our systems is increasing; a full diagnostic may be necessary.",
+          "The interference is mounting—prepare for a system-wide check.",
+          "Our instruments indicate escalating malfunctions; maintenance is advised."
+        ]
+      },
+      operations: {
+        initial: [
+          "There's been a noticeable shift in our flight trajectory.",
+          "Our mission parameters seem to be undergoing unexpected changes."
+        ],
+        branchA: [
+          "It appears our navigation is being influenced by external forces.",
+          "The flight path is altered—possibly due to gravitational anomalies."
+        ],
+        branchB: [
+          "Perhaps it's just a transient blip in deep space.",
+          "These changes might be nothing—merely cosmic background noise."
+        ],
+        chain: [
+          "Operational parameters are fluctuating; stay alert for further updates.",
+          "Our flight data is unstable—monitor for imminent course corrections.",
+          "There’s a discernible shift in our operational metrics."
+        ]
+      },
+      humorous: {
+        initial: [
+          "Well, that's one for the space logs!",
+          "You won't believe the data coming in from deep space!"
+        ],
+        branchA: [
+          "Sometimes I swear the void has a sense of humor.",
+          "It’s almost like the cosmos is playing a prank on us."
+        ],
+        branchB: [
+          "This interstellar drift is oddly entertaining.",
+          "Not every day do we get such bizarre sensor readings."
+        ],
+        chain: [
+          "I can’t help but chuckle at the cosmic absurdity unfolding.",
+          "Sometimes the chatter from the void is downright comical.",
+          "Who knew deep space could be this unpredictable?"
+        ]
+      },
+      reflective: {
+        initial: [
+          "Out here in the infinite void, one can’t help but reflect on our insignificance.",
+          "These transmissions remind me of the vast mystery of space."
+        ],
+        branchA: [
+          "Every signal feels like a whisper from the cosmos.",
+          "The silence between stars speaks volumes."
+        ],
+        branchB: [
+          "Each update is a fragment of a grand interstellar tale.",
+          "The quiet hum of the ship resonates with deeper meaning."
+        ],
+        chain: [
+          "I’m left pondering the true nature of our journey through the stars.",
+          "Sometimes, the void’s silence is as profound as the signals themselves.",
+          "Our voyage evokes reflections on existence in this boundless expanse."
+        ]
+      },
+      maintenance: {
+        initial: [
+          "Diagnostics indicate our ship may be due for maintenance.",
+          "Some systems are showing signs of wear; we might need repairs."
+        ],
+        branchA: [
+          "Perhaps we should recalibrate the hyperdrive.",
+          "A quick check of the reactor might resolve these issues."
+        ],
+        branchB: [
+          "Our readouts show fluctuations—time for a maintenance check?",
+          "The instruments suggest a system review is imminent."
+        ],
+        chain: [
+          "Performance is declining across several modules; maintenance is advised.",
+          "Systems are underperforming—prepare for a diagnostic overhaul.",
+          "Our ship's efficiency is dropping; a visit to the maintenance bay is recommended."
+        ]
+      },
+      navigation: {
+        initial: [
+          "I'm having trouble with our navigation systems; the star tracker seems off.",
+          "The coordinates are not matching our expected course."
+        ],
+        branchA: [
+          "We might need to recalibrate the navigational array.",
+          "A realignment of our trajectory could be in order."
+        ],
+        branchB: [
+          "Our current course is drifting unexpectedly.",
+          "The navigational data appears to be skewed."
+        ],
+        chain: [
+          "The navigational readings are becoming erratic; recalibration is recommended.",
+          "Multiple discrepancies in our course data—adjustments are required.",
+          "Our navigation systems signal increasing instability."
+        ]
+      },
+      logistics: {
+        initial: [
+          "Supply levels in our cargo hold are running low on essential resources.",
+          "Inventory reports indicate critical shortages onboard."
+        ],
+        branchA: [
+          "We should plan for a resupply at the next docking station.",
+          "A review of our logistical chain is necessary."
+        ],
+        branchB: [
+          "Our supply chain is facing delays—inventory is becoming critical.",
+          "Logistics reports are worrisome; supplies are depleting faster than expected."
+        ],
+        chain: [
+          "Further supply issues are anticipated; prepare for a resupply challenge.",
+          "The logistical situation is deteriorating—adjust our inventory strategy.",
+          "We are approaching critical supply levels; mission support is required."
+        ]
+      },
+      security: {
+        initial: [
+          "Unidentified objects have been detected near our perimeter.",
+          "Sensors report potential intrusions in our sector."
+        ],
+        branchA: [
+          "We must remain on high alert; there may be hostile entities nearby.",
+          "All crew, prepare for possible external threats."
+        ],
+        branchB: [
+          "For now, the area appears secure, but stay vigilant.",
+          "No immediate threats detected—maintain standard security protocols."
+        ],
+        chain: [
+          "Security protocols are in effect; monitor for any unexpected intrusions.",
+          "All hands, be prepared for unforeseen security developments.",
+          "Heightened alert: our perimeter is under close observation."
+        ]
+      },
+      morale: {
+        initial: [
+          "Crew morale is high; everyone is in good spirits.",
+          "The team feels energized as we journey through the stars."
+        ],
+        branchA: [
+          "Let’s keep this momentum as we navigate the void.",
+          "Our unity is our strength—stay focused, crew."
+        ],
+        branchB: [
+          "The camaraderie onboard is inspiring—keep it up.",
+          "Good vibes all around as we cruise through deep space."
+        ],
+        chain: [
+          "The energy among the crew is contagious; celebrate our interstellar unity.",
+          "Morale is soaring—let's channel this positivity into our mission.",
+          "The spirit aboard is exemplary; our journey continues with renewed vigor."
+        ]
+      },
+      chitchat: {
+        initial: [
+          "Pilot, what's our status?",
+          "Lieutenant, any interesting readings?",
+          "Crew, share any odd encounters out there?"
+        ],
+        branchA: [
+          "Care to relay any bizarre space tales?",
+          "What’s the latest from your sensor array?"
+        ],
+        branchB: [
+          "I just experienced the weirdest gravitational pull.",
+          "Sometimes, the void tells the strangest stories."
+        ],
+        chain: [
+          "Just exchanging thoughts as we cruise through the cosmos.",
+          "Sometimes, casual chatter is all we have in this endless expanse.",
+          "A bit of banter keeps the monotony of space at bay."
+        ]
+      }
+    };
+
+    /***********************
+     * SCRIPTED EVENTS (FUTURISTIC)
+     ***********************/
+    const scriptedEvents = [
+      "Attention all crew: prepare for a hyperspace jump.",
+      "This is the bridge—an important update is incoming.",
+      "Alert: unexpected cosmic readings detected."
+    ];
+    const extraScriptedEvents = [
+      "Stand by for a system recalibration.",
+      "Attention: All units, new directives will be issued shortly.",
+      "Breaking: further instructions forthcoming."
+    ];
+    const allScriptedEvents = scriptedEvents.concat(extraScriptedEvents);
+
+    /***********************
+     * VOICE ASSIGNMENT FUNCTIONS
+     ***********************/
+    function assignPreferredVoices() {
+      let platform = "unknown";
+      const ua = navigator.userAgent;
+      if (/Android/i.test(ua)) { platform = "android"; }
+      else if (/iPhone|iPad|iPod/i.test(ua)) { platform = "ios"; }
+      else if (/Macintosh/i.test(ua)) { platform = "mac"; }
+      console.log("Platform detected:", platform);
+      users.forEach((user, index) => {
+        let voice = null;
+        if (platform === "ios") {
+          const iosVoices = availableVoices.filter(v => v.lang.startsWith("en"));
+          voice = iosVoices.length > 0 ? iosVoices[index % iosVoices.length] : availableVoices[index % availableVoices.length];
+        } else if (platform === "android") {
+          voice = availableVoices.find(v => v.name.includes("Google"));
+        } else if (platform === "mac") {
+          voice = availableVoices.find(v => v.name === "Alex") || availableVoices.find(v => v.name === "Samantha");
+        }
+        if (!voice) { voice = availableVoices[index % availableVoices.length]; }
+        user.voice = voice;
+        console.log(`Assigned ${user.callSign} voice: ${user.voice.name}`);
+      });
+      updateStatus(`Voices assigned for platform: ${platform}.`);
+    }
+    function assignUserVoices() {
+      availableVoices = window.speechSynthesis.getVoices();
+      if (availableVoices.length === 0) {
+        updateStatus("No voices available. Waiting for voiceschanged event.");
+        window.speechSynthesis.onvoiceschanged = () => {
+          availableVoices = window.speechSynthesis.getVoices();
+          assignPreferredVoices();
+        };
+      } else {
+        assignPreferredVoices();
+      }
+    }
+
+    /***********************
+     * SCRIPTED DIALOGUE GENERATION FUNCTIONS
+     ***********************/
+    function generateStandardMessage(sender, forcedReceiver) {
+      const style = (sender.style === "mixed") ? (Math.random() < 0.5 ? "formal" : "casual") : sender.style;
+      const moodPrefix = (sender.mood !== "calm") ? getMoodPrefix(sender.mood) : "";
+      const location = generateDynamicLocation();
+      if (forcedReceiver) {
+        const opener = (Math.random() < 0.5) ? randomChoice(["In response,", "Regarding that,", "About that,"]) + " " : "";
+        const prefix = getResponsePrefix(style, true);
+        if (sender.callSign === "Alpha" && Math.random() < 0.2) {
+          smallTalkCutMode = true;
+          smallTalkCutUntil = Date.now() + 3 * 60 * 1000;
+          console.log("Alpha commanded: Cut the chatter.");
+          return "Cut the chatter. Bravo and Charlie, keep communications brief. Over.";
+        }
+        if (style === "formal") {
+          let observation = (Math.random() < 0.3) ? randomChoice(extraFormalObservations)
+            : ((environmentCondition === "clear" || environmentCondition === "calm") ? randomChoice(normalObservations) : randomChoice(formalObservations));
+          if ((environmentCondition === "clear" || environmentCondition === "calm") && Math.random() < 0.3) {
+            observation = randomChoice(snarkyResponses);
+          }
+          if (checkForUnusual(observation)) {
+            unusualChainState = "query";
+            console.log("Unusual chain triggered in forced message (formal).");
+          }
+          if (checkForTrigger(observation)) {
+            triggeredChain = true;
+            chainCounter = 1;
+            console.log("Triggered chain activated in forced message (formal).");
+          }
+          if (environmentCondition === "clear" || environmentCondition === "calm") {
+            if (Math.random() < 0.5) {
+              observation += ", " + getDayNightRemark();
+            }
+          }
+          return `${opener}${moodPrefix}${prefix}, ${observation} ${location}. Over.`;
+        } else {
+          const banterChance = smallTalkCutMode ? 0.01 : 0.4;
+          const starter = (Math.random() < 0.3) ? randomChoice(extraBanter) : randomChoice(banterStarters);
+          const remark = randomChoice(banterRemarks);
+          if (!banterChainActive && Math.random() < banterChance) {
+            banterChainActive = true;
+            banterChainCounter = 1;
+            console.log("Banter chain triggered in forced message (casual).");
+          }
+          return `${opener}${moodPrefix}${getResponsePrefix(style, true)}, ${starter} – ${remark}. Over.`;
+        }
+      } else {
+        const isBroadcast = Math.random() < sender.broadcastChance;
+        if (isBroadcast) {
+          if (style === "formal") {
+            let observation = (Math.random() < 0.3) ? randomChoice(extraFormalObservations)
+              : ((environmentCondition === "clear" || environmentCondition === "calm") ? randomChoice(normalObservations) : randomChoice(formalObservations));
+            if ((environmentCondition === "clear" || environmentCondition === "calm") && Math.random() < 0.3) {
+              observation = randomChoice(snarkyResponses);
+            }
+            if (checkForUnusual(observation)) {
+              unusualChainState = "query";
+              console.log("Unusual chain triggered in broadcast message (formal).");
+            }
+            if (checkForTrigger(observation)) {
+              triggeredChain = true;
+              chainCounter = 1;
+              console.log("Triggered chain activated in broadcast message (formal).");
+            }
+            if (environmentCondition === "clear" || environmentCondition === "calm") {
+              if (Math.random() < 0.5) {
+                observation += ", " + getDayNightRemark();
+              }
+            }
+            return `${moodPrefix}${observation} ${location}. Over.`;
+          } else {
+            const starter = randomChoice(banterStarters);
+            const remark = randomChoice(banterRemarks);
+            return `${moodPrefix}${starter} – ${remark}. Over.`;
+          }
+        } else {
+          const potentialSenders = users.filter(u => u.callSign !== sender.callSign);
+          const receiver = randomChoice(potentialSenders);
+          if (style === "formal") {
+            let observation = (Math.random() < 0.3) ? randomChoice(extraFormalObservations)
+              : ((environmentCondition === "clear" || environmentCondition === "calm") ? randomChoice(normalObservations) : randomChoice(formalObservations));
+            if ((environmentCondition === "clear" || environmentCondition === "calm") && Math.random() < 0.3) {
+              observation = randomChoice(snarkyResponses);
+            }
+            if (checkForUnusual(observation)) {
+              unusualChainState = "query";
+              console.log("Unusual chain triggered in personal message (formal).");
+            }
+            if (checkForTrigger(observation)) {
+              triggeredChain = true;
+              chainCounter = 1;
+              console.log("Triggered chain activated in personal message (formal).");
+            }
+            if (environmentCondition === "clear" || environmentCondition === "calm") {
+              if (Math.random() < 0.5) {
+                observation += ", " + getDayNightRemark();
+              }
+            }
+            return `${moodPrefix}${observation} ${location}. Over.`;
+          } else {
+            const starter = randomChoice(banterStarters);
+            const remark = randomChoice(banterRemarks);
+            return `${moodPrefix}${starter} – ${remark}. Over.`;
+          }
+        }
+      }
+    }
+    function generateConversationChainMessage(sender, forcedReceiver) {
+      if (!activeConversation) {
+        activeConversation = {
+          topic: randomChoice(Object.keys(conversationTopics)),
+          lastSpeaker: sender.callSign,
+          count: 0
+        };
+        console.log("Active conversation initialized with topic:", activeConversation.topic);
+      }
+      const banterChainQueries = [
+        "Really? That's incredible—what's the situation?",
+        "Are you serious? Give me more details!",
+        "That sounds extraordinary! Elaborate, please.",
+        "What exactly did you observe out there?"
+      ];
+      const banterChainExplanations = [
+        "I know, it's almost surreal!",
+        "Absolutely, the data is mind-blowing!",
+        "I'm still processing those readings!",
+        "Truly out of this world!"
+      ];
+      let template;
+      if (triggeredChain) {
+        template = (chainCounter % 2 === 1) ? randomChoice(triggeredChainQueries) : randomChoice(triggeredChainExplanations);
+        chainCounter++;
+        console.log("Using triggered chain template:", template);
+        if (chainCounter > maxChainDepth) {
+          triggeredChain = false;
+          chainCounter = 0;
+          console.log("Triggered chain reset (max depth reached).");
+        }
+      } else if (banterChainActive) {
+        template = (banterChainCounter % 2 === 1) ? randomChoice(banterChainQueries) : randomChoice(banterChainExplanations);
+        banterChainCounter++;
+        console.log("Using banter chain template:", template);
+        if (banterChainCounter > maxBanterChainDepth) {
+          banterChainActive = false;
+          banterChainCounter = 0;
+          console.log("Banter chain reset (max depth reached).");
+        }
+      } else if (unusualChainState !== null) {
+        template = (unusualChainState === "query") ? randomChoice(unusualQueries) : randomChoice(unusualExplanations);
+        unusualChainState = (unusualChainState === "query") ? "explanation" : "query";
+        console.log("Using unusual chain template:", template);
+      } else {
+        const topic = activeConversation.topic;
+        const branchChoice = Math.random();
+        if (branchChoice < 0.33) {
+          template = randomChoice(conversationTopics[topic].initial);
+        } else if (branchChoice < 0.66) {
+          template = randomChoice(conversationTopics[topic].branchA);
+        } else {
+          template = randomChoice(conversationTopics[topic].branchB);
+        }
+      }
+      const opener = (Math.random() < 0.5) ? randomChoice(["In response,", "Regarding that,", "About that,"]) + " " : "";
+      const style = (sender.style === "mixed") ? (Math.random() < 0.5 ? "formal" : "casual") : sender.style;
+      const prefix = getResponsePrefix(style, true);
+      if (style === "formal") {
+        const conditionRemark = getConditionRemark();
+        if (conditionRemark !== "") { template += ", " + conditionRemark; }
+      }
+      activeConversation.lastSpeaker = sender.callSign;
+      activeConversation.count++;
+      if (activeConversation.count >= 5) { activeConversation = null; }
+      return `${opener}${getMoodPrefix(sender.mood)}${prefix}, ${template} Over.`;
+    }
+    function generateUnscriptedMessage(sender) {
+      return randomChoice(allUnscriptedAssets);
+    }
+    function generateMessage(sender, forcedReceiver) {
+      if (smallTalkCutMode && Date.now() > smallTalkCutUntil) {
+        smallTalkCutMode = false;
+        console.log("Small talk cut mode deactivated.");
+      }
+      if (forcedReceiver) {
+        if (Math.random() < 0.7) {
+          const banterChance = (sender.style !== "formal" && !banterChainActive) ? (smallTalkCutMode ? 0.01 : 0.4) : 0;
+          if (banterChance > 0 && Math.random() < banterChance) {
+            banterChainActive = true;
+            banterChainCounter = 1;
+            console.log("Banter chain triggered in forced message (casual).");
+          }
+          if (activeConversation || banterChainActive || triggeredChain || unusualChainState !== null) {
+            console.log("Forced reply using chain response.");
+            console.log("In reply from last tx from " + lastMessage.sender.callSign);
+            return generateConversationChainMessage(sender, forcedReceiver);
+          }
+        }
+      }
+      const unscriptedChance = forcedReceiver ? 0.1 : 0.3;
+      if (Math.random() < unscriptedChance) {
+        return generateUnscriptedMessage(sender);
+      }
+      updateMood(sender);
+      if (!forcedReceiver && !activeConversation && Math.random() < 0.2) {
+        const topics = Object.keys(conversationTopics);
+        const chosenTopic = randomChoice(topics);
+        activeConversation = { topic: chosenTopic, lastSpeaker: sender.callSign, count: 1 };
+        const template = randomChoice(conversationTopics[chosenTopic].initial);
+        return `${getMoodPrefix(sender.mood)}${template}`;
+      }
+      return generateStandardMessage(sender, forcedReceiver);
+    }
+
+    /***********************
+     * LLM FUNCTIONS FOR HYBRID MODE
+     ***********************/
+    function generateMinimalPrompt(count) {
+      const parts = [];
+      if (count % 12 === 0) {
+        parts.push(`${environmentCondition}, ${timeOfDay}.`);
+      }
+      if (conversationHistory.length > 0) {
+        const fullHistory = conversationHistory.map(item => item.message).join(" ");
+        const snippet = fullHistory.slice(-200);
+        parts.push(`(${snippet})`);
+      }
+      parts.push(generateRandomRadioWordsHybrid());
+      return parts.join(" ");
+    }
+    function cleanUpMessageHybrid(message) {
+      message = message.replace(/\[.*?\]/g, "").replace(/\s+/g, " ").trim();
+      message = message.replace(/(~end~|>>)/g, "").trim();
+      message = message.replace(/https?:\/\/\S+/g, "").trim();
+      while (/\s+(?:a|an|and|the|they)[\s\.,;:!?]*$/i.test(message)) {
+        message = message.replace(/\s+(?:a|an|and|the|they)[\s\.,;:!?]*$/i, "");
+      }
+      return message;
+    }
+    async function loadGenerator() {
+      if (!generator) {
+        updateStatus("Loading LLM model...");
+        generator = await pipeline('text-generation', 'Xenova/gpt2');
+        updateStatus("LLM model loaded.");
+        console.log("LLM model loaded:", generator);
+      }
+    }
+    async function generateLLMMessage(sender, forcedReceiver, count) {
+      const prompt = generateMinimalPrompt(count);
+      console.log("LLM prompt:", prompt);
+      let candidate = "";
+      let attempts = 0;
+      const maxAttempts = 3;
+      let llmSuccess = true;
+      while (attempts < maxAttempts) {
+        try {
+          const results = await generator(prompt, { 
+            max_length: 100,
+            min_length: 30,
+            temperature: 0.4,
+            top_p: 0.85,
+            repetition_penalty: 2.0
+          });
+          candidate = results[0].generated_text.trim();
+          console.log("Raw candidate:", candidate);
+          if (candidate.startsWith(prompt)) {
+            candidate = candidate.substring(prompt.length).trim();
+          }
+          if (!/[.!?]$/.test(candidate)) {
+            candidate += ".";
+          }
+          if (candidate.length >= 5) {
+            break;
+          }
+        } catch (err) {
+          console.error("LLM error on attempt", attempts + 1, ":", err);
+        }
+        attempts++;
+      }
+      if (candidate.length < 5) {
+        const fallbackMessages = [
+          "Diagnostics complete, systems nominal.",
+          "No anomalies detected.",
+          "Routine check complete.",
+          "Standby for further instructions."
+        ];
+        candidate = randomChoice(fallbackMessages);
+        console.log("Using fallback message:", candidate);
+        llmSuccess = false;
+      }
+      candidate = cleanUpMessageHybrid(candidate);
+      if (count % 12 === 0 && environmentCondition !== "clear" &&
+          candidate.toLowerCase().indexOf(environmentCondition.toLowerCase()) === -1) {
+        candidate += ` (${environmentCondition} conditions)`;
+      }
+      console.log("Final candidate:", candidate);
+      updateConversationHistory(candidate, activeConversation ? activeConversation.topic : null);
+      if (llmSuccess) { llmSuccessCount++; } else { llmFailureCount++; }
+      updateLLMCounters();
+      return candidate;
+    }
+
+    /***********************
+     * AUDIO & INTERFERENCE FUNCTIONS
+     ***********************/
+    function playCharacterNoise(user) {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+      }
+      const duration = 10, sampleRate = audioCtx.sampleRate, bufferSize = sampleRate * duration;
+      const noiseBuffer = audioCtx.createBuffer(1, bufferSize, sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      const noiseSource = audioCtx.createBufferSource();
+      noiseSource.buffer = noiseBuffer;
+      noiseSource.loop = true;
+      const filter = audioCtx.createBiquadFilter();
+      if (user.callSign === "Alpha") {
+        filter.type = "lowpass";
+        filter.frequency.setValueAtTime(500, audioCtx.currentTime);
+      } else if (user.callSign === "Bravo") {
+        filter.type = "bandpass";
+        filter.frequency.setValueAtTime(2000, audioCtx.currentTime);
+        filter.Q.setValueAtTime(1.0, audioCtx.currentTime);
+      } else if (user.callSign === "Charlie") {
+        filter.type = "highpass";
+        filter.frequency.setValueAtTime(1500, audioCtx.currentTime);
+      } else {
+        filter.type = "bandpass";
+        filter.frequency.setValueAtTime(1000, audioCtx.currentTime);
+      }
+      const gainNode = audioCtx.createGain();
+      gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+      noiseSource.connect(filter);
+      filter.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      noiseSource.start();
+      return noiseSource;
+    }
+    function playCommBlip() {
+      if (!audioCtx) return;
+      const blipOsc = audioCtx.createOscillator();
+      const blipGain = audioCtx.createGain();
+      blipOsc.frequency.setValueAtTime(1200, audioCtx.currentTime);
+      blipGain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      blipOsc.connect(blipGain);
+      blipGain.connect(audioCtx.destination);
+      blipOsc.start();
+      blipGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+      blipOsc.stop(audioCtx.currentTime + 0.15);
+    }
+    function startInterference() {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+      }
+      const sampleRate = audioCtx.sampleRate, bufferSize = sampleRate * 10;
+      const noiseBuffer = audioCtx.createBuffer(1, bufferSize, sampleRate);
+      const output = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        output[i] = Math.random() * 2 - 1;
+      }
+      basicNoiseSource = audioCtx.createBufferSource();
+      basicNoiseSource.buffer = noiseBuffer;
+      basicNoiseSource.loop = true;
+      const basicFilter = audioCtx.createBiquadFilter();
+      basicFilter.type = "bandpass";
+      basicFilter.frequency.setValueAtTime(3000, audioCtx.currentTime);
+      basicFilter.Q.setValueAtTime(1, audioCtx.currentTime);
+      const basicGain = audioCtx.createGain();
+      basicGain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+      basicNoiseSource.connect(basicFilter);
+      basicFilter.connect(basicGain);
+      basicGain.connect(audioCtx.destination);
+      basicNoiseSource.start();
+
+      advancedNoiseSource = audioCtx.createBufferSource();
+      advancedNoiseSource.buffer = noiseBuffer;
+      advancedNoiseSource.loop = true;
+      const advancedFilter = audioCtx.createBiquadFilter();
+      advancedFilter.type = "bandpass";
+      advancedFilter.frequency.setValueAtTime(2500, audioCtx.currentTime);
+      advancedFilter.Q.setValueAtTime(1.5, audioCtx.currentTime);
+      const advancedGain = audioCtx.createGain();
+      advancedGain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+      lfo = audioCtx.createOscillator();
+      lfo.frequency.setValueAtTime(0.5, audioCtx.currentTime);
+      const lfoGain = audioCtx.createGain();
+      lfoGain.gain.setValueAtTime(0.03, audioCtx.currentTime);
+      const nonLinearShaper = audioCtx.createWaveShaper();
+      nonLinearShaper.curve = makeNonlinearCurve(3);
+      nonLinearShaper.oversample = '4x';
+      lfo.connect(lfoGain);
+      lfoGain.connect(nonLinearShaper);
+      nonLinearShaper.connect(advancedGain.gain);
+      lfo.start();
+      advancedNoiseSource.connect(advancedFilter);
+      advancedFilter.connect(advancedGain);
+      advancedGain.connect(audioCtx.destination);
+      advancedNoiseSource.start();
+    }
+    function triggerBurstInterference() {
+      if (!audioCtx) return;
+      const burstDuration = 0.1, sampleRate = audioCtx.sampleRate;
+      const burstBuffer = audioCtx.createBuffer(1, sampleRate * burstDuration, sampleRate);
+      const burstData = burstBuffer.getChannelData(0);
+      for (let i = 0; i < burstBuffer.length; i++) {
+        burstData[i] = Math.random() * 2 - 1;
+      }
+      const burstSource = audioCtx.createBufferSource();
+      burstSource.buffer = burstBuffer;
+      const burstGain = audioCtx.createGain();
+      burstGain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      burstGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + burstDuration);
+      const burstFilter = audioCtx.createBiquadFilter();
+      burstFilter.type = "highpass";
+      burstFilter.frequency.setValueAtTime(2000, audioCtx.currentTime);
+      burstSource.connect(burstFilter);
+      burstFilter.connect(burstGain);
+      burstGain.connect(audioCtx.destination);
+      burstSource.start();
+      burstSource.stop(audioCtx.currentTime + burstDuration);
+    }
+    function scheduleBurstInterference() {
+      if (!simulationRunning) return;
+      const burstInterval = Math.random() * 3000 + 2000;
+      burstInterferenceTimer = setTimeout(() => {
+        triggerBurstInterference();
+        scheduleBurstInterference();
+      }, burstInterval);
+    }
+
+    /***********************
+     * FUTURISTIC LOCATION GENERATOR
+     ***********************/
+    function generateDynamicLocation() {
+      const locationTypes = ["Sector", "Quadrant", "Grid", "Module", "Compartment", "Bay", "Wing"];
+      const type = randomChoice(locationTypes);
+      if (type === "Grid") {
+        const number = Math.floor(Math.random() * 10) + 1;
+        const letter = randomChoice("ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(''));
+        return `Grid ${number}${letter}`;
+      } else {
+        const number = Math.floor(Math.random() * 20) + 1;
+        return `${type} ${number}`;
+      }
+    }
+
+    /***********************
+     * ENVIRONMENT & TIME FUNCTIONS (SPACE‑THEMED)
+     ***********************/
+    function updateEnvironment() {
+      const conditions = ["clear", "nebula drift", "asteroid field", "radiation spike", "solar flare", "ion storm", "gravity anomaly"];
+      environmentCondition = randomChoice(conditions);
+      console.log("Environment updated to:", environmentCondition);
+    }
+    function getConditionRemark() {
+      switch (environmentCondition) {
+        case "clear": return "with clear cosmic views";
+        case "nebula drift": return "amid swirling nebula hues";
+        case "asteroid field": return "as debris drifts past";
+        case "radiation spike": return "under intense radiation";
+        case "solar flare": return "with bursts of solar flare";
+        case "ion storm": return "amid violent ion storms";
+        case "gravity anomaly": return "as gravitational ripples distort space";
+        default: return "";
+      }
+    }
+    function getDayNightRemark() {
+      return (timeOfDay === "night")
+             ? "with the viewport cloaked in darkness and distant stars"
+             : "with the engine glow illuminating the cabin";
+    }
+    function updateTimeOfDay() {
+      timeOfDay = (timeOfDay === "day") ? "night" : "day";
+      console.log("Time of day updated to:", timeOfDay);
+    }
+
+    /***********************
+     * HELPER FUNCTIONS
+     ***********************/
+    const triggerKeywords = ["urgent", "alert", "critical"];
+    function checkForTrigger(text) {
+      return triggerKeywords.some(keyword => text.toLowerCase().includes(keyword));
+    }
+    function checkForUnusual(text) {
+      const lower = text.toLowerCase();
+      return lower.includes("unusual") || lower.includes("anomalous") ||
+             lower.includes("erratic") || lower.includes("anomaly") ||
+             lower.includes("odd");
+    }
+    function randomChoice(arr) {
+      return arr[Math.floor(Math.random() * arr.length)];
+    }
+    function makeNonlinearCurve(amount = 3) {
+      const samples = 1024;
+      const curve = new Float32Array(samples);
+      for (let i = 0; i < samples; i++) {
+        const x = (i * 2) / samples - 1;
+        curve[i] = Math.sign(x) * Math.pow(Math.abs(x), amount);
+      }
+      return curve;
+    }
+
+    /***********************
+     * SIMULATED RADIO USERS
+     ***********************/
+    const users = [
+      { callSign: "Alpha",  pitch: 0.8, rate: 1.0, voice: null, broadcastChance: 0.2, style: "formal", mood: "calm", baseMood: "calm" },
+      { callSign: "Bravo",  pitch: 1.2, rate: 1.1, voice: null, broadcastChance: 0.7, style: "casual", mood: "agitated", baseMood: "agitated" },
+      { callSign: "Charlie", pitch: 0.9, rate: 0.9, voice: null, broadcastChance: 0.3, style: "mixed", mood: "reflective", baseMood: "reflective" }
+    ];
+
+    /***********************
+     * HYBRID TRANSMISSION SIMULATION
+     ***********************/
+    async function simulateTransmission() {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+        console.log("Audio context created.");
+      }
+      transmissionCount++;
+      document.getElementById("txCount").textContent = "Transmission Count: " + transmissionCount;
+      console.log("Transmission count:", transmissionCount);
+
+      let sender, forcedReceiver = null;
+      if (lastMessage && !lastMessage.broadcast && Math.random() < 0.7) {
+        sender = lastMessage.receiver;
+        forcedReceiver = lastMessage.sender;
+        console.log(`Direct response: ${sender.callSign} replying to ${forcedReceiver.callSign}`);
+      } else {
+        let possibleSenders = users;
+        if (lastMessage) {
+          possibleSenders = users.filter(u => u.callSign !== lastMessage.sender.callSign);
+        }
+        sender = randomChoice(possibleSenders);
+        console.log(`New transmission from: ${sender.callSign}`);
+      }
+
+      let message = "";
+      if (transmissionCount % 3 === 0) {
+        console.log("Using LLM-based generation for transmission #" + transmissionCount);
+        await loadGenerator();
+        message = await generateLLMMessage(sender, forcedReceiver, transmissionCount);
+      } else {
+        console.log("Using scripted generation for transmission #" + transmissionCount);
+        message = generateMessage(sender, forcedReceiver);
+      }
+
+      const broadcast = message.includes("to all units:");
+      console.log("Generated message:", message);
+      const finalText = forcedReceiver
+        ? `${sender.callSign} to ${forcedReceiver.callSign}: ${message}`
+        : (broadcast ? `${sender.callSign} to all units: ${message}` : `${sender.callSign}: ${message}`);
+
+      const logDiv = document.getElementById('log');
+      const p = document.createElement('p');
+      p.textContent = cleanUpFinalMessage(finalText);
+      if (sender.callSign === "Alpha") { p.classList.add("log-Alpha"); }
+      else if (sender.callSign === "Bravo") { p.classList.add("log-Bravo"); }
+      logDiv.appendChild(p);
+      logDiv.scrollTop = logDiv.scrollHeight;
+
+      const utterance = new SpeechSynthesisUtterance(message);
+      utterance.lang = 'en-US';
+      utterance.pitch = sender.pitch;
+      utterance.rate = sender.rate;
+      if (sender.voice) { utterance.voice = sender.voice; }
+      let charNoiseSource = null;
+      utterance.onstart = function() {
+        playCommBlip();
+        charNoiseSource = playCharacterNoise(sender);
+      };
+      utterance.onend = function() {
+        playCommBlip();
+        if (charNoiseSource) {
+          try { charNoiseSource.stop(); } catch(e) { console.error("Error stopping noise:", e); }
+        }
+        const multiplier = parseFloat(document.getElementById("delayMultiplier").value);
+        const delay = (lastMessage && lastMessage.isResponse)
+          ? (Math.random() * (5000 - 3000) + 3000) * multiplier
+          : (Math.random() * (10000 - 6000) + 6000) * multiplier;
+        console.log(`Next message in ${(delay / 1000).toFixed(1)} seconds.`);
+        setTimeout(() => { if (simulationRunning) simulateTransmission(); }, delay);
+      };
+      window.speechSynthesis.speak(utterance);
+      let receiverObj;
+      if (forcedReceiver) {
+        receiverObj = forcedReceiver;
+      } else if (broadcast) {
+        receiverObj = { callSign: "all units" };
+      } else {
+        const potentialReceivers = users.filter(u => u.callSign !== sender.callSign);
+        receiverObj = randomChoice(potentialReceivers);
+      }
+      updateConversationHistory(message, activeConversation ? activeConversation.topic : null);
+      lastMessage = {
+        sender: sender,
+        receiver: receiverObj,
+        broadcast: broadcast,
+        message: message,
+        isResponse: (forcedReceiver !== null)
+      };
+    }
+    function cleanUpFinalMessage(text) {
+      text = text.replace(/(^[\w]+(?:\s+to\s+[\w]+:)\s*)\1+/i, "$1 ");
+      text = text.replace(/\b(\w+)(\s+\1\b)+/gi, "$1");
+      text = text.replace(/^[\s:;,.]+/, "").replace(/[\s:;,.]+$/, "");
+      return text;
+    }
+    function startSimulation() {
+      if (simulationRunning) return;
+      simulationRunning = true;
+      console.log("Simulation starting...");
+      assignUserVoices();
+      updateStatus("Voices loaded. Starting simulation...");
+      simulateTransmission();
+      startInterference();
+      scheduleBurstInterference();
+      setInterval(updateEnvironment, 60000);
+      setInterval(updateTimeOfDay, 30000);
+      setInterval(() => {
+        if (audioCtx && audioCtx.state === 'suspended') {
+          audioCtx.resume().then(() => { console.log("Audio context resumed"); })
+            .catch((err) => { console.error("Error resuming audio context:", err); });
+        }
+      }, 10000);
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && audioCtx && audioCtx.state === 'suspended') {
+          audioCtx.resume().then(() => { console.log("Audio context resumed on visibility change"); });
+        }
+      });
+    }
+    function stopSimulation() {
+      simulationRunning = false;
+      window.speechSynthesis.cancel();
+      updateStatus("Simulation stopped.");
+      console.log("Simulation stopped.");
+      if (basicNoiseSource) { try { basicNoiseSource.stop(); } catch(e) { console.error(e); } basicNoiseSource.disconnect(); basicNoiseSource = null; }
+      if (advancedNoiseSource) { try { advancedNoiseSource.stop(); } catch(e) { console.error(e); } advancedNoiseSource.disconnect(); advancedNoiseSource = null; }
+      if (lfo) { try { lfo.stop(); } catch(e) { console.error(e); } lfo.disconnect(); lfo = null; }
+      if (burstInterferenceTimer) { clearTimeout(burstInterferenceTimer); burstInterferenceTimer = null; }
+    }
+
+    /***********************
+     * UI EVENT LISTENERS
+     ***********************/
+    document.getElementById('startSim').addEventListener('click', startSimulation);
+    document.getElementById('stopSim').addEventListener('click', stopSimulation);
+    document.getElementById('clearLog').addEventListener('click', () => {
+      document.getElementById('log').innerHTML = "";
+    });
+    document.getElementById('delayMultiplier').addEventListener('input', (event) => {
+      document.getElementById('multiplierValue').textContent = event.target.value;
+    });
+  </script>
+</body>
+</html>
