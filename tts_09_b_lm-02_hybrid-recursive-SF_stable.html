@@ -1,0 +1,2199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Emergent Petri Dish Simulator – Evo Traits & Radiation Lethality</title>
+  <style>
+    /* ----------------------- Global Styles ----------------------- */
+    body { 
+      margin: 0; 
+      overflow: hidden; 
+      background-color: #101010; 
+    }
+    canvas { 
+      display: block; 
+    }
+    
+    /* ----------------------- Control Panel Styles ----------------------- */
+    /* The control panel scrolls vertically if its content is too tall */
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 10px;
+      border-radius: 8px;
+      color: #fff;
+      font-family: sans-serif;
+      font-size: 14px;
+      z-index: 10;
+      max-width: 320px;
+      max-height: 90vh;       /* Maximum height: 90% of viewport */
+      overflow-y: auto;       /* Enable vertical scrolling */
+      cursor: move;
+    }
+    #controls.minimized #controlsContent { 
+      display: none; 
+    }
+    #controlsHeader {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    #controlsHeader span { 
+      font-weight: bold; 
+    }
+    #minimizeButton {
+      background: transparent;
+      border: none;
+      color: #fff;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    
+    /* ----------------------- Form & Label Styles ----------------------- */
+    .block h3 {
+      margin: 10px 0 5px;
+      padding: 0;
+      border-bottom: 1px solid #666;
+      font-size: 16px;
+    }
+    .control-group { 
+      margin-bottom: 10px; 
+    }
+    .control-group label { 
+      display: inline-block; 
+      width: 150px; 
+    }
+    .control-group input[type="range"] { 
+      width: 120px; 
+    }
+    .control-group button { 
+      margin-right: 5px; 
+    }
+    
+    /* ----------------------- Debug & Tooltip Styles ----------------------- */
+    #debug {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      color: lime;
+      font-family: monospace;
+      font-size: 12px;
+      z-index: 10;
+      background: rgba(0,0,0,0.5);
+      padding: 4px;
+    }
+    #tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: rgba(0,0,0,0.7);
+      color: #fff;
+      font-family: monospace;
+      font-size: 12px;
+      padding: 4px;
+      border-radius: 4px;
+      display: none;
+      z-index: 20;
+    }
+  </style>
+</head>
+<body>
+  <!-- ----------------------- CONTROL PANEL (UI) ----------------------- -->
+  <div id="controls" class="minimized">
+    <div id="controlsHeader">
+      <span>Control Panel</span>
+      <button id="minimizeButton">☰</button>
+    </div>
+    <div id="controlsContent">
+      <!-- 1. General Simulation Settings -->
+      <div class="block">
+        <h3>General Settings</h3>
+        <div class="control-group">
+          <label for="speedControl">Simulation Speed:</label>
+          <input id="speedControl" type="range" min="0" max="10" step="0.001" value="8.153">
+          <span id="speedDisplay">8.153</span>
+        </div>
+        <div class="control-group">
+          <label for="mutationSlider">Mutation Multiplier:</label>
+          <input id="mutationSlider" type="range" min="0.1" max="10" step="0.1" value="10.0">
+          <span id="mutationDisplay">10.0</span>
+        </div>
+      </div>
+      
+      <!-- 2. Goo Settings -->
+      <div class="block">
+        <h3>Goo</h3>
+        <div class="control-group">
+          <label for="photosynthesisSlider">Photosynthesis Rate:</label>
+          <input id="photosynthesisSlider" type="range" min="0.005" max="0.1" step="0.001" value="0.100">
+          <span id="photosynthesisDisplay">0.100</span>
+        </div>
+      </div>
+      
+      <!-- 3. Hairy Settings -->
+      <div class="block">
+        <h3>Hairy</h3>
+        <div class="control-group">
+          <label for="hairyNibbleSlider">Nibble Prob.:</label>
+          <!-- Base value on a big screen is 0.50 -->
+          <input id="hairyNibbleSlider" type="range" min="0.05" max="0.8" step="0.01" value="0.50">
+          <span id="hairyNibbleDisplay">0.50</span>
+        </div>
+        <div class="control-group">
+          <label for="hairyEnergySlider">Initial Energy:</label>
+          <!-- Base value on a big screen is 50 -->
+          <input id="hairyEnergySlider" type="range" min="10" max="100" step="1" value="50">
+          <span id="hairyEnergyDisplay">50</span>
+        </div>
+        <div class="control-group">
+          <label for="hairyVsHairySlider">Vs. Hairy Damage Prob.:</label>
+          <input id="hairyVsHairySlider" type="range" min="0.05" max="1" step="0.01" value="1.00">
+          <span id="hairyVsHairyDisplay">1.00</span>
+        </div>
+        <div class="control-group">
+          <label for="hairyHuntDamageSlider">Hunt Damage:</label>
+          <input id="hairyHuntDamageSlider" type="range" min="1" max="20" step="1" value="9">
+          <span id="hairyHuntDamageDisplay">9</span>
+        </div>
+        <div class="control-group">
+          <label for="hairyFightDamageSlider">Fight Damage:</label>
+          <input id="hairyFightDamageSlider" type="range" min="1" max="20" step="1" value="16">
+          <span id="hairyFightDamageDisplay">16</span>
+        </div>
+      </div>
+      
+      <!-- 4. Shelly Settings -->
+      <div class="block">
+        <h3>Shelly</h3>
+        <div class="control-group">
+          <label for="shellyNibbleSlider">Nibble Prob.:</label>
+          <input id="shellyNibbleSlider" type="range" min="0.01" max="0.25" step="0.01" value="0.15">
+          <span id="shellyNibbleDisplay">0.15</span>
+        </div>
+        <div class="control-group">
+          <label for="shellyEnergySlider">Initial Energy:</label>
+          <input id="shellyEnergySlider" type="range" min="20" max="120" step="1" value="33">
+          <span id="shellyEnergyDisplay">33</span>
+        </div>
+        <div class="control-group">
+          <label for="shellyMunchDamageSlider">Munch Damage:</label>
+          <input id="shellyMunchDamageSlider" type="range" min="1" max="20" step="1" value="2">
+          <span id="shellyMunchDamageDisplay">2</span>
+        </div>
+      </div>
+      
+      <!-- 5. Mobbing / Combat Settings (Shelly mob behavior) -->
+      <div class="block">
+        <h3>Mobbing / Combat</h3>
+        <div class="control-group">
+          <label for="shellyMinMobSlider">Min Mob Size:</label>
+          <input id="shellyMinMobSlider" type="range" min="1" max="10" step="1" value="4">
+          <span id="shellyMinMobDisplay">4</span>
+        </div>
+        <div class="control-group">
+          <label for="shellyMobDamageSlider">Mob Damage:</label>
+          <input id="shellyMobDamageSlider" type="range" min="1" max="20" step="1" value="4">
+          <span id="shellyMobDamageDisplay">4</span>
+        </div>
+      </div>
+      
+      <!-- 6. Mixo (Omnivore) Settings -->
+      <div class="block">
+        <h3>Mixo (Omnivore)</h3>
+        <div class="control-group">
+          <label for="omnivoreEnergySlider">Initial Energy:</label>
+          <!-- Updated default energy to 35 -->
+          <input id="omnivoreEnergySlider" type="range" min="20" max="100" step="1" value="35">
+          <span id="omnivoreEnergyDisplay">35</span>
+        </div>
+        <div class="control-group">
+          <label for="omnivoreEfficiencySlider">Omni Efficiency:</label>
+          <input id="omnivoreEfficiencySlider" type="range" min="0.5" max="2.0" step="0.01" value="0.70">
+          <span id="omnivoreEfficiencyDisplay">0.70</span>
+        </div>
+        <div class="control-group">
+          <label for="omnivoreDietBiasSlider">Diet Bias:</label>
+          <input id="omnivoreDietBiasSlider" type="range" min="0" max="1" step="0.01" value="0.30">
+          <span id="omnivoreDietBiasDisplay">0.30</span>
+        </div>
+        <!-- Mixo's Nibble Damage is now renamed to Munch Damage -->
+        <div class="control-group">
+          <label for="mixoMunchDamageSlider">Munch Damage:</label>
+          <!-- Updated default munch damage to 2 -->
+          <input id="mixoMunchDamageSlider" type="range" min="1" max="20" step="1" value="2">
+          <span id="mixoMunchDamageDisplay">2</span>
+        </div>
+        <div class="control-group">
+          <label for="mixoHuntDamageSlider">Hunt Damage:</label>
+          <input id="mixoHuntDamageSlider" type="range" min="1" max="20" step="1" value="2">
+          <span id="mixoHuntDamageDisplay">2</span>
+        </div>
+        <div class="control-group">
+          <label for="mixoFightDamageSlider">Fight Damage:</label>
+          <input id="mixoFightDamageSlider" type="range" min="1" max="20" step="1" value="2">
+          <span id="mixoFightDamageDisplay">2</span>
+        </div>
+      </div>
+      
+      <!-- 7. Placement & Reset Buttons -->
+      <div class="control-group">
+        <button id="placeGoo">Place Goo</button>
+        <button id="placeHairy">Place Hairy</button>
+        <button id="placeShelly">Place Shelly</button>
+        <button id="placeOmnivore">Place Mixo</button>
+      </div>
+      <div class="control-group">
+        <button id="resetDefaults">Reset Defaults</button>
+      </div>
+      <div class="control-group">
+        <small>Click canvas for radiation if not placing a critter</small>
+      </div>
+    </div>
+  </div>
+  
+  <!-- ----------------------- Debug Info & Tooltip ----------------------- -->
+  <div id="debug">Population: 0</div>
+  <div id="tooltip"></div>
+  <canvas></canvas>
+  
+  <!--
+    ================================================================================
+    INDEX (placed at the top of the script):
+    ================================================================================
+    1. Helper Functions
+       - getNucleusColor: Interpolates HSL color for Mixo nucleus.
+       - clamp: Constrains a value between a minimum and maximum.
+       - addEnergy: Adds energy to a particle (capped by type/size).
+       - getTrait: Computes a trait multiplier from a gene.
+       - mapSpikeHueToColor: Maps Hairy critter’s spike hue.
+       - getAggressionMultiplier: Calculates aggression multiplier for Hairy.
+    
+    2. Global Setup & UI Elements
+       - Canvas initialization & sizing.
+       - DOM queries for debug, tooltip, and slider elements.
+       - Global simulation parameters loaded from slider inputs.
+       - zoom and worldSize are declared at the top.
+    
+    3. Slider Controls & Event Listeners
+       - Each slider updates its corresponding global variable and display.
+       - Reset defaults sets base values (with updated defaults for Hairy and Mixo)
+         then calls adjustHairyStatsForScreen.
+    
+    4. Draggable & Minimizable Control Panel Logic
+       - Mouse events for dragging the panel and toggling its visibility.
+    
+    5. Particle (Critter) Definitions & Behavior Functions
+       - Definitions for Goo, Hairy, Shelly, and Mixo with individual drawing and behavior functions.
+    
+    6. Particle Creation & Initialization Functions
+       - Functions to create particles by type and at specified locations.
+       - initializeParticles populates the simulation.
+    
+    7. Genetic Mutation & Reproduction Functions
+       - mutateParticle: Applies mutations based on mutation rate.
+       - reproduceParticle: Creates an offspring with slight variations.
+    
+    8. Radiation, Placement & Poop Mechanics
+       - Canvas click handler: Either places a critter or creates a radiation zone.
+       - Functions to generate and draw procedural “poop.”
+    
+    9. Main Simulation Loop
+       - update: Processes movement, interactions, reproduction, and drawing each frame.
+    
+    10. Tooltip & Mouse/Touch Event Handlers
+        - Displays detailed particle trait info when hovering near a critter.
+    
+    11. Screen Size Adjustments for Hairy Critters (Based on Window Area)
+        - adjustHairyStatsForScreen: Now uses window.innerWidth * window.innerHeight (area) to compute a scale.
+          For a reference area of 960,000 (1200×800) the base values are Energy = 50 and Nibble Prob. = 0.50.
+          For a minimum area of 230,400 (360×640), the maximum scale factor is now 1.8 (instead of 2.0),
+          resulting in Energy = 50×1.8 = 90 and Nibble Prob. = 0.50×1.8 = 0.90.
+    
+    12. Particle Population Initialization
+        - Calls initializeParticles to start the simulation.
+    ================================================================================
+  -->
+  
+  <script>
+    /***********************
+     * 1. HELPER FUNCTIONS
+     ***********************/
+    function getNucleusColor(dietBias) {
+      if (dietBias < 0.5) {
+        let t = dietBias / 0.5;
+        return `hsl(${Math.round(180 + (30 - 180) * t)},${Math.round(70 + (60 - 70) * t)}%,${Math.round(50 + (40 - 50) * t)}%)`;
+      } else {
+        let t = (dietBias - 0.5) / 0.5;
+        return `hsl(${Math.round(30 + (0 - 30) * t)},${Math.round(60 + (80 - 60) * t)}%,${Math.round(40 + (50 - 40) * t)}%)`;
+      }
+    }
+    
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+    
+    function addEnergy(particle, amount) {
+      let max;
+      if (particle.type === 0) { 
+        max = 80 * (particle.size / 8);
+      } else if (particle.type === 1) { 
+        max = 100;
+      } else if (particle.type === 2) { 
+        max = 120;
+      } else if (particle.type === 3) { 
+        max = 110;
+      }
+      particle.energy = Math.min(particle.energy + amount, max);
+    }
+    
+    function getTrait(particle, geneName, base) {
+      return 1 + (particle.dna[geneName] - base) / 20;
+    }
+    
+    function mapSpikeHueToColor(spikeHue) {
+      if (spikeHue <= 60) { 
+        return 120 - spikeHue; 
+      } else { 
+        return 60 - (spikeHue - 60); 
+      }
+    }
+    
+    function getAggressionMultiplier(particle) {
+      return 1 + ((particle.dna.mainHue - 50) / 100);
+    }
+    
+    /***********************
+     * 2. GLOBAL SETUP & UI ELEMENTS
+     ***********************/
+    // Global zoom factor.
+    let zoom = 0.6;
+    
+    const canvas = document.querySelector('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    
+    // worldSize is a mutable object.
+    let worldSize = { width: canvas.width * zoom, height: canvas.height * zoom };
+    
+    const debugDiv = document.getElementById('debug');
+    const tooltipDiv = document.getElementById('tooltip');
+    
+    let simulationSpeed = parseFloat(document.getElementById('speedControl').value);
+    let GLOBAL_MUTATION_MULTIPLIER = parseFloat(document.getElementById('mutationSlider').value);
+    let GOO_PHOTOSYNTHESIS_RATE = parseFloat(document.getElementById('photosynthesisSlider').value);
+    let HAIRY_NIBBLE_PROBABILITY = parseFloat(document.getElementById('hairyNibbleSlider').value);
+    let SHELLY_NIBBLE_PROBABILITY = parseFloat(document.getElementById('shellyNibbleSlider').value);
+    let SHELLY_INITIAL_ENERGY = parseFloat(document.getElementById('shellyEnergySlider').value);
+    let HAIRY_INITIAL_ENERGY = parseFloat(document.getElementById('hairyEnergySlider').value);
+    let HAIRY_VS_HAIRY_DAMAGE_PROBABILITY = parseFloat(document.getElementById('hairyVsHairySlider').value);
+    let OMNIVORE_INITIAL_ENERGY = parseFloat(document.getElementById('omnivoreEnergySlider').value);
+    let OMNIVORE_OMNI_EFFICIENCY = parseFloat(document.getElementById('omnivoreEfficiencySlider').value);
+    let OMNIVORE_DIET_BIAS = parseFloat(document.getElementById('omnivoreDietBiasSlider').value);
+    let MIXO_MUNCH_DAMAGE = parseFloat(document.getElementById('mixoMunchDamageSlider').value);
+    let MIXO_HUNT_DAMAGE = parseFloat(document.getElementById('mixoHuntDamageSlider').value);
+    let MIXO_FIGHT_DAMAGE = parseFloat(document.getElementById('mixoFightDamageSlider').value);
+    let SHELLY_MIN_MOB_SIZE = parseInt(document.getElementById('shellyMinMobSlider').value);
+    let SHELLY_MOB_DAMAGE = parseInt(document.getElementById('shellyMobDamageSlider').value);
+    let HAIRY_HUNT_DAMAGE = parseFloat(document.getElementById('hairyHuntDamageSlider').value);
+    let HAIRY_FIGHT_DAMAGE = parseFloat(document.getElementById('hairyFightDamageSlider').value);
+    let SHELLY_MUNCH_DAMAGE = parseFloat(document.getElementById('shellyMunchDamageSlider').value);
+    const NEWBORN_IMMUNITY_DURATION = 3;
+    
+    const speedDisplay = document.getElementById('speedDisplay');
+    const mutationDisplay = document.getElementById('mutationDisplay');
+    const photosynthesisDisplay = document.getElementById('photosynthesisDisplay');
+    const hairyNibbleDisplay = document.getElementById('hairyNibbleDisplay');
+    const shellyNibbleDisplay = document.getElementById('shellyNibbleDisplay');
+    const shellyEnergyDisplay = document.getElementById('shellyEnergyDisplay');
+    const hairyEnergyDisplay = document.getElementById('hairyEnergyDisplay');
+    const hairyVsHairyDisplay = document.getElementById('hairyVsHairyDisplay');
+    const shellyMinMobDisplay = document.getElementById('shellyMinMobDisplay');
+    const shellyMobDamageDisplay = document.getElementById('shellyMobDamageDisplay');
+    const hairyHuntDamageDisplay = document.getElementById('hairyHuntDamageDisplay');
+    const hairyFightDamageDisplay = document.getElementById('hairyFightDamageDisplay');
+    const shellyMunchDamageDisplay = document.getElementById('shellyMunchDamageDisplay');
+    const omnivoreEnergyDisplay = document.getElementById('omnivoreEnergyDisplay');
+    const omnivoreEfficiencyDisplay = document.getElementById('omnivoreEfficiencyDisplay');
+    const omnivoreDietBiasDisplay = document.getElementById('omnivoreDietBiasDisplay');
+    const mixoMunchDamageDisplay = document.getElementById('mixoMunchDamageDisplay');
+    const mixoHuntDamageDisplay = document.getElementById('mixoHuntDamageDisplay');
+    const mixoFightDamageDisplay = document.getElementById('mixoFightDamageDisplay');
+    
+    function updateSliderDisplays() {
+      speedDisplay.textContent = simulationSpeed.toFixed(3);
+      mutationDisplay.textContent = GLOBAL_MUTATION_MULTIPLIER.toFixed(1);
+      photosynthesisDisplay.textContent = GOO_PHOTOSYNTHESIS_RATE.toFixed(3);
+      hairyNibbleDisplay.textContent = HAIRY_NIBBLE_PROBABILITY.toFixed(2);
+      shellyNibbleDisplay.textContent = SHELLY_NIBBLE_PROBABILITY.toFixed(2);
+      shellyEnergyDisplay.textContent = SHELLY_INITIAL_ENERGY.toFixed(0);
+      hairyEnergyDisplay.textContent = HAIRY_INITIAL_ENERGY.toFixed(0);
+      hairyVsHairyDisplay.textContent = HAIRY_VS_HAIRY_DAMAGE_PROBABILITY.toFixed(2);
+      shellyMinMobDisplay.textContent = SHELLY_MIN_MOB_SIZE;
+      shellyMobDamageDisplay.textContent = SHELLY_MOB_DAMAGE;
+      hairyHuntDamageDisplay.textContent = HAIRY_HUNT_DAMAGE.toFixed(0);
+      hairyFightDamageDisplay.textContent = HAIRY_FIGHT_DAMAGE.toFixed(0);
+      shellyMunchDamageDisplay.textContent = SHELLY_MUNCH_DAMAGE.toFixed(0);
+      omnivoreEnergyDisplay.textContent = OMNIVORE_INITIAL_ENERGY.toFixed(0);
+      omnivoreEfficiencyDisplay.textContent = OMNIVORE_OMNI_EFFICIENCY.toFixed(2);
+      omnivoreDietBiasDisplay.textContent = OMNIVORE_DIET_BIAS.toFixed(2);
+      mixoMunchDamageDisplay.textContent = MIXO_MUNCH_DAMAGE.toFixed(0);
+      mixoHuntDamageDisplay.textContent = MIXO_HUNT_DAMAGE.toFixed(0);
+      mixoFightDamageDisplay.textContent = MIXO_FIGHT_DAMAGE.toFixed(0);
+    }
+    updateSliderDisplays();
+    
+    /***********************
+     * 3. SLIDER EVENT LISTENERS
+     ***********************/
+    document.getElementById('speedControl').addEventListener("input", (e) => {
+      simulationSpeed = parseFloat(e.target.value);
+      speedDisplay.textContent = simulationSpeed.toFixed(3);
+    });
+    document.getElementById('mutationSlider').addEventListener("input", (e) => {
+      GLOBAL_MUTATION_MULTIPLIER = parseFloat(e.target.value);
+      mutationDisplay.textContent = GLOBAL_MUTATION_MULTIPLIER.toFixed(1);
+    });
+    document.getElementById('photosynthesisSlider').addEventListener("input", (e) => {
+      GOO_PHOTOSYNTHESIS_RATE = parseFloat(e.target.value);
+      photosynthesisDisplay.textContent = GOO_PHOTOSYNTHESIS_RATE.toFixed(3);
+    });
+    document.getElementById('hairyNibbleSlider').addEventListener("input", (e) => {
+      HAIRY_NIBBLE_PROBABILITY = parseFloat(e.target.value);
+      hairyNibbleDisplay.textContent = HAIRY_NIBBLE_PROBABILITY.toFixed(2);
+    });
+    document.getElementById('shellyNibbleSlider').addEventListener("input", (e) => {
+      SHELLY_NIBBLE_PROBABILITY = parseFloat(e.target.value);
+      shellyNibbleDisplay.textContent = SHELLY_NIBBLE_PROBABILITY.toFixed(2);
+    });
+    document.getElementById('shellyEnergySlider').addEventListener("input", (e) => {
+      SHELLY_INITIAL_ENERGY = parseFloat(e.target.value);
+      shellyEnergyDisplay.textContent = SHELLY_INITIAL_ENERGY.toFixed(0);
+      particles.forEach(p => { if (p.type === 2) { p.energy = SHELLY_INITIAL_ENERGY; } });
+    });
+    document.getElementById('hairyEnergySlider').addEventListener("input", (e) => {
+      HAIRY_INITIAL_ENERGY = parseFloat(e.target.value);
+      hairyEnergyDisplay.textContent = HAIRY_INITIAL_ENERGY.toFixed(0);
+      particles.forEach(p => { if (p.type === 1) { p.energy = HAIRY_INITIAL_ENERGY; } });
+    });
+    document.getElementById('hairyVsHairySlider').addEventListener("input", (e) => {
+      HAIRY_VS_HAIRY_DAMAGE_PROBABILITY = parseFloat(e.target.value);
+      hairyVsHairyDisplay.textContent = HAIRY_VS_HAIRY_DAMAGE_PROBABILITY.toFixed(2);
+    });
+    document.getElementById('shellyMinMobSlider').addEventListener("input", (e) => {
+      SHELLY_MIN_MOB_SIZE = parseInt(e.target.value);
+      shellyMinMobDisplay.textContent = SHELLY_MIN_MOB_SIZE;
+    });
+    document.getElementById('shellyMobDamageSlider').addEventListener("input", (e) => {
+      SHELLY_MOB_DAMAGE = parseInt(e.target.value);
+      shellyMobDamageDisplay.textContent = SHELLY_MOB_DAMAGE;
+    });
+    document.getElementById('hairyHuntDamageSlider').addEventListener("input", (e) => {
+      HAIRY_HUNT_DAMAGE = parseFloat(e.target.value);
+      hairyHuntDamageDisplay.textContent = HAIRY_HUNT_DAMAGE.toFixed(0);
+    });
+    document.getElementById('hairyFightDamageSlider').addEventListener("input", (e) => {
+      HAIRY_FIGHT_DAMAGE = parseFloat(e.target.value);
+      hairyFightDamageDisplay.textContent = HAIRY_FIGHT_DAMAGE.toFixed(0);
+    });
+    document.getElementById('shellyMunchDamageSlider').addEventListener("input", (e) => {
+      SHELLY_MUNCH_DAMAGE = parseFloat(e.target.value);
+      shellyMunchDamageDisplay.textContent = SHELLY_MUNCH_DAMAGE.toFixed(0);
+    });
+    document.getElementById('omnivoreEnergySlider').addEventListener("input", (e) => {
+      OMNIVORE_INITIAL_ENERGY = parseFloat(e.target.value);
+      omnivoreEnergyDisplay.textContent = OMNIVORE_INITIAL_ENERGY.toFixed(0);
+    });
+    document.getElementById('omnivoreEfficiencySlider').addEventListener("input", (e) => {
+      OMNIVORE_OMNI_EFFICIENCY = parseFloat(e.target.value);
+      omnivoreEfficiencyDisplay.textContent = OMNIVORE_OMNI_EFFICIENCY.toFixed(2);
+    });
+    document.getElementById('omnivoreDietBiasSlider').addEventListener("input", (e) => {
+      OMNIVORE_DIET_BIAS = parseFloat(e.target.value);
+      omnivoreDietBiasDisplay.textContent = OMNIVORE_DIET_BIAS.toFixed(2);
+    });
+    document.getElementById('mixoMunchDamageSlider').addEventListener("input", (e) => {
+      MIXO_MUNCH_DAMAGE = parseFloat(e.target.value);
+      mixoMunchDamageDisplay.textContent = MIXO_MUNCH_DAMAGE.toFixed(0);
+    });
+    document.getElementById('mixoHuntDamageSlider').addEventListener("input", (e) => {
+      MIXO_HUNT_DAMAGE = parseFloat(e.target.value);
+      mixoHuntDamageDisplay.textContent = MIXO_HUNT_DAMAGE.toFixed(0);
+    });
+    document.getElementById('mixoFightDamageSlider').addEventListener("input", (e) => {
+      MIXO_FIGHT_DAMAGE = parseFloat(e.target.value);
+      mixoFightDamageDisplay.textContent = MIXO_FIGHT_DAMAGE.toFixed(0);
+    });
+    
+    document.getElementById('resetDefaults').addEventListener("click", () => {
+      // General defaults
+      document.getElementById('speedControl').value = 8.153;
+      simulationSpeed = 8.153;
+      document.getElementById('mutationSlider').value = 10.0;
+      GLOBAL_MUTATION_MULTIPLIER = 10.0;
+      
+      // Goo defaults
+      document.getElementById('photosynthesisSlider').value = 0.100;
+      GOO_PHOTOSYNTHESIS_RATE = 0.100;
+      
+      // Hairy defaults (base for a big screen)
+      document.getElementById('hairyNibbleSlider').value = 0.50;
+      HAIRY_NIBBLE_PROBABILITY = 0.50;
+      document.getElementById('hairyEnergySlider').value = 50;
+      HAIRY_INITIAL_ENERGY = 50;
+      document.getElementById('hairyVsHairySlider').value = 1.00;
+      HAIRY_VS_HAIRY_DAMAGE_PROBABILITY = 1.00;
+      document.getElementById('hairyHuntDamageSlider').value = 9;
+      HAIRY_HUNT_DAMAGE = 9;
+      document.getElementById('hairyFightDamageSlider').value = 16;
+      HAIRY_FIGHT_DAMAGE = 16;
+      
+      // Shelly defaults
+      document.getElementById('shellyNibbleSlider').value = 0.15;
+      SHELLY_NIBBLE_PROBABILITY = 0.15;
+      document.getElementById('shellyEnergySlider').value = 33;
+      SHELLY_INITIAL_ENERGY = 33;
+      document.getElementById('shellyMunchDamageSlider').value = 2;
+      SHELLY_MUNCH_DAMAGE = 2;
+      
+      // Mobbing/Combat defaults
+      document.getElementById('shellyMinMobSlider').value = 4;
+      SHELLY_MIN_MOB_SIZE = 4;
+      document.getElementById('shellyMobDamageSlider').value = 4;
+      SHELLY_MOB_DAMAGE = 4;
+      
+      // Mixo defaults (updated: energy = 35, munch damage = 2)
+      document.getElementById('omnivoreEnergySlider').value = 35;
+      OMNIVORE_INITIAL_ENERGY = 35;
+      document.getElementById('omnivoreEfficiencySlider').value = 0.70;
+      OMNIVORE_OMNI_EFFICIENCY = 0.70;
+      document.getElementById('omnivoreDietBiasSlider').value = 0.30;
+      OMNIVORE_DIET_BIAS = 0.30;
+      document.getElementById('mixoMunchDamageSlider').value = 2;
+      MIXO_MUNCH_DAMAGE = 2;
+      document.getElementById('mixoHuntDamageSlider').value = 2;
+      MIXO_HUNT_DAMAGE = 2;
+      document.getElementById('mixoFightDamageSlider').value = 2;
+      MIXO_FIGHT_DAMAGE = 2;
+      
+      updateSliderDisplays();
+      adjustHairyStatsForScreen();
+    });
+    
+    /***********************
+     * 4. DRAGGABLE & MINIMIZABLE CONTROL PANEL LOGIC
+     ***********************/
+    const controls = document.getElementById('controls');
+    const minimizeButton = document.getElementById('minimizeButton');
+    let isDragging = false, dragOffsetX = 0, dragOffsetY = 0;
+    
+    document.getElementById('controlsHeader').addEventListener('mousedown', (e) => {
+      isDragging = true;
+      dragOffsetX = e.clientX - controls.offsetLeft;
+      dragOffsetY = e.clientY - controls.offsetTop;
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (isDragging) {
+        controls.style.left = (e.clientX - dragOffsetX) + 'px';
+        controls.style.top = (e.clientY - dragOffsetY) + 'px';
+      }
+    });
+    document.addEventListener('mouseup', () => { 
+      isDragging = false; 
+    });
+    minimizeButton.addEventListener('click', () => {
+      controls.classList.toggle('minimized');
+      minimizeButton.textContent = controls.classList.contains('minimized') ? "☰" : "–";
+    });
+    
+    /***********************
+     * 5. PARTICLE (CRITTER) DEFINITIONS & BEHAVIOR FUNCTIONS
+     ***********************/
+    const statLabels = {
+      0: { main: "Nutrient Value", sub: "Defensive Toughness", detail: "Growth Rate", extra: "Spread" },
+      1: { main: "Behavior (Aggression)", sub: "Agility", detail: "Fighting Persistence", extra: "Spike Combat Efficiency" },
+      2: { main: "Nibble Efficiency", sub: "Evasion", detail: "Defensive Resilience" },
+      3: { main: "Foraging Efficiency", sub: "Agility", detail: "Digestive Persistence", extra: "Diet Bias" }
+    };
+    
+    const particleTypes = [
+      {
+        name: "Goo",
+        draw: (ctx, x, y, particle) => {
+          const baseSize = particle.size;
+          for (let i = 0; i < 3; i++) {
+            const angle = i * (2 * Math.PI / 3);
+            const pulse = 1 + 0.1 * Math.sin(particle.age * 0.05 + i);
+            const orbSize = baseSize * pulse;
+            const offset = baseSize * 1.0;
+            const orbX = x + offset * Math.cos(angle);
+            const orbY = y + offset * Math.sin(angle);
+            let gene = particle.dna[i === 0 ? "mainHue" : i === 1 ? "subHue" : "detailHue"];
+            let light = 50 + (((gene % 1) - 0.5) * 30);
+            ctx.fillStyle = `hsla(${gene},70%,${light}%,0.85)`;
+            ctx.beginPath();
+            ctx.arc(orbX, orbY, orbSize, 0, 2 * Math.PI);
+            ctx.fill();
+          }
+          ctx.strokeStyle = `hsl(100,50%,30%)`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x, y + baseSize * 0.5);
+          ctx.stroke();
+        },
+        behavior: (particle) => {
+          let bonus = particle.dna.mainHue < 80 ? 1.2 : 1.0;
+          particle.vx = (Math.random() - 0.5) * 0.5 * particle.dna.spread * bonus;
+          particle.vy = (Math.random() - 0.5) * 0.5 * particle.dna.spread * bonus;
+        }
+      },
+      {
+        name: "Hairy",
+        draw: (ctx, x, y, particle) => {
+          const size = particle.size;
+          ctx.fillStyle = `hsl(${particle.dna.mainHue},80%,50%)`;
+          ctx.beginPath();
+          ctx.arc(x, y, size, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.fillStyle = `hsl(${particle.dna.subHue},80%,50%)`;
+          ctx.beginPath();
+          ctx.arc(x, y, size * 0.5, 0, 2 * Math.PI);
+          ctx.fill();
+          let aggressionFactor = clamp((particle.dna.detailHue - 100) / 40, 0, 1);
+          let hairLineWidth = 1 + 3 * aggressionFactor;
+          let hairBrightness = 50 + 20 * aggressionFactor;
+          let mappedHue = mapSpikeHueToColor(particle.dna.spikeHue);
+          let spikeColor = `hsl(${mappedHue},100%,${hairBrightness}%)`;
+          ctx.strokeStyle = spikeColor;
+          ctx.lineWidth = hairLineWidth;
+          for (let i = 0; i < 8; i++) {
+            const angle = (2 * Math.PI * i) / 8;
+            const lx = x + Math.cos(angle) * (size + 4);
+            const ly = y + Math.sin(angle) * (size + 4);
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(lx, ly);
+            ctx.stroke();
+          }
+          if (particle.predationCue > 0) {
+            ctx.strokeStyle = "yellow";
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(x, y, size + 4, 0, 2 * Math.PI);
+            ctx.stroke();
+          }
+        },
+        behavior: (particle) => {
+          let agility = getTrait(particle, "subHue", 120);
+          particle.vx += (Math.random() - 0.5) * agility / particle.size * 0.005;
+          particle.vy += (Math.random() - 0.5) * agility / particle.size * 0.005;
+          let aggressionMod = getAggressionMultiplier(particle);
+          let target = null, minDist = Infinity;
+          for (let other of particles) {
+            if (other.type === 2 || (other.type === 3 && particle.energy > other.energy)) {
+              let dx = other.x - particle.x;
+              let dy = other.y - particle.y;
+              let dist = Math.sqrt(dx * dx + dy * dy);
+              if (dist < minDist) { 
+                minDist = dist; 
+                target = other; 
+              }
+            }
+          }
+          if (target) {
+            let dx = target.x - particle.x;
+            let dy = target.y - particle.y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > 0) {
+              let chaseMultiplier = 1.5 * aggressionMod;
+              particle.vx += (dx / dist) * 0.01 * chaseMultiplier;
+              particle.vy += (dy / dist) * 0.01 * chaseMultiplier;
+              if (dist < 10 && Math.random() < HAIRY_NIBBLE_PROBABILITY * 1.2) {
+                let spikeFactor = 1 + (particle.dna.spikeHue - 60) / 50;
+                let nibbleAmount = 5 * (target.size / 10) * spikeFactor * HAIRY_HUNT_DAMAGE;
+                target.energy -= nibbleAmount;
+                addEnergy(particle, nibbleAmount);
+                particle.predationCue = 30;
+                if (target.energy <= 0) {
+                  let index = particles.indexOf(target);
+                  if (index !== -1) { 
+                    particles.splice(index, 1); 
+                  }
+                }
+              }
+            }
+          } else {
+            for (let other of particles) {
+              if (other.type === 1 && other !== particle) {
+                let dx = other.x - particle.x;
+                let dy = other.y - particle.y;
+                let d = Math.sqrt(dx * dx + dy * dy);
+                if (d < 20) {
+                  if (particle.age < NEWBORN_IMMUNITY_DURATION || other.age < NEWBORN_IMMUNITY_DURATION) {
+                    if (particle.age < other.age) {
+                      let repulsionForce = 0.3;
+                      let rx = particle.x - other.x;
+                      let ry = particle.y - other.y;
+                      let r = Math.sqrt(rx * rx + ry * ry);
+                      if (r > 0) {
+                        particle.vx = (rx / r) * repulsionForce;
+                        particle.vy = (ry / r) * repulsionForce;
+                      }
+                    } else {
+                      let repulsionForce = 0.3;
+                      let rx = other.x - particle.x;
+                      let ry = other.y - particle.y;
+                      let r = Math.sqrt(rx * rx + ry * ry);
+                      if (r > 0) {
+                        other.vx = (rx / r) * repulsionForce;
+                        other.vy = (ry / r) * repulsionForce;
+                      }
+                    }
+                  } else {
+                    if (Math.random() < HAIRY_VS_HAIRY_DAMAGE_PROBABILITY * (aggressionMod - 0.5)) {
+                      const damage = HAIRY_FIGHT_DAMAGE;
+                      particle.energy -= damage;
+                      other.energy -= damage;
+                      particle.predationCue = 30;
+                      other.predationCue = 30;
+                    }
+                  }
+                }
+              }
+            }
+          }
+          for (let poop of poops) {
+            let dx = particle.x - poop.x;
+            let dy = particle.y - poop.y;
+            let d = Math.sqrt(dx * dx + dy * dy);
+            if (d < 50 && d > 0) {
+              let rep = 0.05 * (1 - d / 50);
+              particle.vx += (dx / d) * rep;
+              particle.vy += (dy / d) * rep;
+            }
+          }
+        }
+      },
+      {
+        name: "Shelly",
+        draw: (ctx, x, y, particle) => {
+          const size = particle.size;
+          ctx.fillStyle = `hsl(${particle.dna.mainHue},70%,30%)`;
+          ctx.beginPath();
+          for (let i = 0; i < 6; i++) {
+            const angle = (2 * Math.PI * i) / 6;
+            const px = x + Math.cos(angle) * size;
+            const py = y + Math.sin(angle) * size;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = `hsl(${particle.dna.subHue},80%,70%)`;
+          ctx.beginPath();
+          ctx.arc(x, y, size * 0.5, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.fillStyle = `hsl(${particle.dna.detailHue},90%,50%)`;
+          ctx.beginPath();
+          ctx.arc(x, y, size * 0.2, 0, 2 * Math.PI);
+          ctx.fill();
+          if (particle.predationCue > 0) {
+            ctx.strokeStyle = "cyan";
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(x, y, size + 4, 0, 2 * Math.PI);
+            ctx.stroke();
+          }
+        },
+        behavior: (particle) => {
+          let evasion = getTrait(particle, "subHue", 120);
+          particle.vx += (Math.random() - 0.5) * evasion / particle.size * 0.01;
+          particle.vy += (Math.random() - 0.5) * evasion / particle.size * 0.01;
+          let target = null, minDist = 100;
+          for (let other of particles) {
+            if (other.type === 0) {
+              let dx = other.x - particle.x;
+              let dy = other.y - particle.y;
+              let d = Math.sqrt(dx * dx + dy * dy);
+              if (d < minDist) { 
+                minDist = d; 
+                target = other; 
+              }
+            }
+          }
+          if (target) {
+            let dx = target.x - particle.x;
+            let dy = target.y - particle.y;
+            let d = Math.sqrt(dx * dx + dy * dy);
+            if (d > 0) {
+              let huntMultiplier = 1.0;
+              if (particle.energy < 40) { 
+                huntMultiplier = 1.5; 
+              } else if (particle.energy > 100) { 
+                huntMultiplier = 0.5; 
+              }
+              particle.vx += (dx / d) * 0.02 * huntMultiplier;
+              particle.vy += (dy / d) * 0.02 * huntMultiplier;
+            }
+          }
+          if (particle.type === 2) {
+            let candidates = [];
+            for (let other of particles) {
+              if (other.type === 0) {
+                let dx = other.x - particle.x;
+                let dy = other.y - particle.y;
+                let d = Math.sqrt(dx * dx + dy * dy);
+                if (d < 10) {
+                  let nibbleEfficiency = getTrait(particle, "mainHue", 120);
+                  let defense = getTrait(other, "subHue", 120);
+                  let estimatedTransfer = 2 * nibbleEfficiency / defense * (other.size / 10);
+                  candidates.push({ target: other, estimatedTransfer: estimatedTransfer });
+                }
+              }
+            }
+            if (candidates.length > 0) {
+              let chosen;
+              if (Math.random() < 0.7) {
+                chosen = candidates.reduce((best, candidate) =>
+                  candidate.estimatedTransfer > best.estimatedTransfer ? candidate : best, candidates[0]);
+              } else {
+                chosen = candidates[Math.floor(Math.random() * candidates.length)];
+              }
+              if (Math.random() < SHELLY_NIBBLE_PROBABILITY) {
+                let transfer = chosen.estimatedTransfer * SHELLY_MUNCH_DAMAGE;
+                chosen.target.energy -= transfer;
+                addEnergy(particle, transfer);
+                particle.predationCue = 30;
+                particle.vx = 0;
+                particle.vy = 0;
+                if (chosen.target.energy <= 0) {
+                  let index = particles.indexOf(chosen.target);
+                  if (index !== -1) { 
+                    particles.splice(index, 1); 
+                  }
+                }
+              }
+            }
+          }
+          for (let poop of poops) {
+            let dx = particle.x - poop.x;
+            let dy = particle.y - poop.y;
+            let d = Math.sqrt(dx * dx + dy * dy);
+            if (d < 50 && d > 0) {
+              let rep = 0.05 * (1 - d / 50);
+              particle.vx += (dx / d) * rep;
+              particle.vy += (dy / d) * rep;
+            }
+          }
+        }
+      },
+      {
+        name: "Mixo",
+        draw: (ctx, x, y, particle) => {
+          const size = particle.size;
+          let grad = ctx.createRadialGradient(x, y, size * 0.2, x, y, size);
+          grad.addColorStop(0, `hsl(${particle.dna.mainHue},70%,50%)`);
+          grad.addColorStop(1, `hsl(${particle.dna.mainHue},70%,40%)`);
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          const points = 8;
+          for (let i = 0; i < points; i++) {
+            const angle = (i / points) * 2 * Math.PI;
+            const r = size * (1 + 0.2 * Math.sin(particle.age * 0.05 + i));
+            const px = x + r * Math.cos(angle);
+            const py = y + r * Math.sin(angle);
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = getNucleusColor(particle.dna.dietBias);
+          ctx.beginPath();
+          ctx.arc(x, y, size * 0.5, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.strokeStyle = `hsl(${particle.dna.subHue},80%,40%)`;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          if (particle.predationCue > 0) {
+            ctx.strokeStyle = "yellow";
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(x, y, size + 4, 0, 2 * Math.PI);
+            ctx.stroke();
+          }
+        },
+        behavior: (particle) => {
+          let baseAttraction = 1 - Math.abs(particle.dna.dietBias - 0.5) / 0.5;
+          let detectionRange = 100 + 50 * baseAttraction;
+          let predatorNearby = false;
+          for (let q of particles) {
+            if (q.type === 1) {
+              let dx = particle.x - q.x;
+              let dy = particle.y - q.y;
+              let d = Math.sqrt(dx * dx + dy * dy);
+              if (d < 40) { 
+                predatorNearby = true; 
+                break; 
+              }
+            }
+          }
+          let effectiveAttraction = predatorNearby ? baseAttraction * 0.5 : baseAttraction;
+          let availablePoops = [];
+          for (let p of poops) {
+            let dx = particle.x - p.x;
+            let dy = particle.y - p.y;
+            let d = Math.sqrt(dx * dx + dy * dy);
+            if (d < detectionRange) { 
+              availablePoops.push(p); 
+            }
+          }
+          if (availablePoops.length > 0 && Math.random() < effectiveAttraction) {
+            let targetX = 0, targetY = 0;
+            for (let p of availablePoops) {
+              targetX += p.x;
+              targetY += p.y;
+            }
+            targetX /= availablePoops.length;
+            targetY /= availablePoops.length;
+            let dx = targetX - particle.x;
+            let dy = targetY - particle.y;
+            let d = Math.sqrt(dx * dx + dy * dy);
+            if (d > 0) {
+              let multiplier = 0.02;
+              particle.vx += (dx / d) * multiplier;
+              particle.vy += (dy / d) * multiplier;
+            }
+            if (d < 5) {
+              addEnergy(particle, 2 * particle.dna.omniEfficiency);
+              let closest = availablePoops[0];
+              let closestD = Math.sqrt((availablePoops[0].x - targetX) ** 2 + (availablePoops[0].y - targetY) ** 2);
+              for (let p of availablePoops) {
+                let dd = Math.sqrt((p.x - targetX) ** 2 + (p.y - targetY) ** 2);
+                if (dd < closestD) { 
+                  closest = p; 
+                  closestD = dd; 
+                }
+              }
+              let idx = poops.indexOf(closest);
+              if (idx !== -1) { 
+                poops.splice(idx, 1); 
+              }
+              particle.absorbCue = 30;
+              return;
+            } else if (d < 10) {
+              addEnergy(particle, 2 * particle.dna.omniEfficiency);
+              let closest = availablePoops[0];
+              let closestD = Math.sqrt((availablePoops[0].x - targetX) ** 2 + (availablePoops[0].y - targetY) ** 2);
+              for (let p of availablePoops) {
+                let dd = Math.sqrt((p.x - targetX) ** 2 + (p.y - targetY) ** 2);
+                if (dd < closestD) { 
+                  closest = p; 
+                  closestD = dd; 
+                }
+              }
+              closest.lifetime -= 2;
+              particle.absorbCue = 30;
+              return;
+            }
+          }
+          let agility = getTrait(particle, "subHue", 20);
+          particle.vx += (Math.random() - 0.5) * agility / particle.size * 0.005;
+          particle.vy += (Math.random() - 0.5) * agility / particle.size * 0.005;
+          let bestScore = -Infinity;
+          let bestCandidate = null;
+          for (let other of particles) {
+            if (other === particle) continue;
+            if (other.type === 3) continue;
+            if (other.type === 1 && particle.energy <= other.energy) continue;
+            let dx = other.x - particle.x;
+            let dy = other.y - particle.y;
+            let distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance <= 0) continue;
+            let benefit = 0;
+            let risk = 1;
+            if (other.type === 0) {
+              benefit = (other.size / 10) * MIXO_MUNCH_DAMAGE * particle.dna.omniEfficiency;
+              risk = 1;
+            } else if (other.type === 2) {
+              benefit = (other.size / 10) * MIXO_HUNT_DAMAGE * particle.dna.omniEfficiency;
+              risk = 3;
+            } else if (other.type === 1) {
+              benefit = (other.size / 10) * MIXO_FIGHT_DAMAGE * particle.dna.omniEfficiency;
+              risk = 4;
+            }
+            if (particle.dna.dietBias < 0.5) {
+              if (other.type === 0) benefit *= 1.2;
+              else benefit *= 0.8;
+            } else {
+              if (other.type !== 0) benefit *= 1.2;
+              else benefit *= 0.8;
+            }
+            let score = benefit / (distance * risk);
+            if (score > bestScore) {
+              bestScore = score;
+              bestCandidate = other;
+            }
+          }
+          if (bestCandidate) {
+            let dx = bestCandidate.x - particle.x;
+            let dy = bestCandidate.y - particle.y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > 0) {
+              let multiplier = 0.01 * (bestCandidate.type === 0 ? 1.2 : 1.5);
+              particle.vx += (dx / dist) * multiplier;
+              particle.vy += (dy / dist) * multiplier;
+              if (dist < 10) {
+                let nibbleAmount = 0;
+                if (bestCandidate.type === 0) {
+                  nibbleAmount = MIXO_MUNCH_DAMAGE * (bestCandidate.size / 10) * particle.dna.omniEfficiency;
+                } else if (bestCandidate.type === 2) {
+                  nibbleAmount = MIXO_HUNT_DAMAGE * (bestCandidate.size / 10) * particle.dna.omniEfficiency;
+                } else if (bestCandidate.type === 1) {
+                  nibbleAmount = MIXO_FIGHT_DAMAGE * (bestCandidate.size / 10) * particle.dna.omniEfficiency;
+                }
+                bestCandidate.energy -= nibbleAmount;
+                addEnergy(particle, nibbleAmount);
+                particle.predationCue = 30;
+                if (bestCandidate.energy <= 0) {
+                  let index = particles.indexOf(bestCandidate);
+                  if (index !== -1) { 
+                    particles.splice(index, 1); 
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "Shelly",
+        draw: (ctx, x, y, particle) => {
+          const size = particle.size;
+          ctx.fillStyle = `hsl(${particle.dna.mainHue},70%,30%)`;
+          ctx.beginPath();
+          for (let i = 0; i < 6; i++) {
+            const angle = (2 * Math.PI * i) / 6;
+            const px = x + Math.cos(angle) * size;
+            const py = y + Math.sin(angle) * size;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = `hsl(${particle.dna.subHue},80%,70%)`;
+          ctx.beginPath();
+          ctx.arc(x, y, size * 0.5, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.fillStyle = `hsl(${particle.dna.detailHue},90%,50%)`;
+          ctx.beginPath();
+          ctx.arc(x, y, size * 0.2, 0, 2 * Math.PI);
+          ctx.fill();
+          if (particle.predationCue > 0) {
+            ctx.strokeStyle = "cyan";
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(x, y, size + 4, 0, 2 * Math.PI);
+            ctx.stroke();
+          }
+        },
+        behavior: (particle) => {
+          let evasion = getTrait(particle, "subHue", 120);
+          particle.vx += (Math.random() - 0.5) * evasion / particle.size * 0.01;
+          particle.vy += (Math.random() - 0.5) * evasion / particle.size * 0.01;
+          let target = null, minDist = 100;
+          for (let other of particles) {
+            if (other.type === 0) {
+              let dx = other.x - particle.x;
+              let dy = other.y - particle.y;
+              let d = Math.sqrt(dx * dx + dy * dy);
+              if (d < minDist) { 
+                minDist = d; 
+                target = other; 
+              }
+            }
+          }
+          if (target) {
+            let dx = target.x - particle.x;
+            let dy = target.y - particle.y;
+            let d = Math.sqrt(dx * dx + dy * dy);
+            if (d > 0) {
+              let huntMultiplier = 1.0;
+              if (particle.energy < 40) { 
+                huntMultiplier = 1.5; 
+              } else if (particle.energy > 100) { 
+                huntMultiplier = 0.5; 
+              }
+              particle.vx += (dx / d) * 0.02 * huntMultiplier;
+              particle.vy += (dy / d) * 0.02 * huntMultiplier;
+            }
+          }
+          if (particle.type === 2) {
+            let candidates = [];
+            for (let other of particles) {
+              if (other.type === 0) {
+                let dx = other.x - particle.x;
+                let dy = other.y - particle.y;
+                let d = Math.sqrt(dx * dx + dy * dy);
+                if (d < 10) {
+                  let nibbleEfficiency = getTrait(particle, "mainHue", 120);
+                  let defense = getTrait(other, "subHue", 120);
+                  let estimatedTransfer = 2 * nibbleEfficiency / defense * (other.size / 10);
+                  candidates.push({ target: other, estimatedTransfer: estimatedTransfer });
+                }
+              }
+            }
+            if (candidates.length > 0) {
+              let chosen;
+              if (Math.random() < 0.7) {
+                chosen = candidates.reduce((best, candidate) =>
+                  candidate.estimatedTransfer > best.estimatedTransfer ? candidate : best, candidates[0]);
+              } else {
+                chosen = candidates[Math.floor(Math.random() * candidates.length)];
+              }
+              if (Math.random() < SHELLY_NIBBLE_PROBABILITY) {
+                let transfer = chosen.estimatedTransfer * SHELLY_MUNCH_DAMAGE;
+                chosen.target.energy -= transfer;
+                addEnergy(particle, transfer);
+                particle.predationCue = 30;
+                particle.vx = 0;
+                particle.vy = 0;
+                if (chosen.target.energy <= 0) {
+                  let index = particles.indexOf(chosen.target);
+                  if (index !== -1) { 
+                    particles.splice(index, 1); 
+                  }
+                }
+              }
+            }
+          }
+          for (let poop of poops) {
+            let dx = particle.x - poop.x;
+            let dy = particle.y - poop.y;
+            let d = Math.sqrt(dx * dx + dy * dy);
+            if (d < 50 && d > 0) {
+              let rep = 0.05 * (1 - d / 50);
+              particle.vx += (dx / d) * rep;
+              particle.vy += (dy / d) * rep;
+            }
+          }
+        }
+      },
+      {
+        name: "Mixo",
+        draw: (ctx, x, y, particle) => {
+          const size = particle.size;
+          let grad = ctx.createRadialGradient(x, y, size * 0.2, x, y, size);
+          grad.addColorStop(0, `hsl(${particle.dna.mainHue},70%,50%)`);
+          grad.addColorStop(1, `hsl(${particle.dna.mainHue},70%,40%)`);
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          const points = 8;
+          for (let i = 0; i < points; i++) {
+            const angle = (i / points) * 2 * Math.PI;
+            const r = size * (1 + 0.2 * Math.sin(particle.age * 0.05 + i));
+            const px = x + r * Math.cos(angle);
+            const py = y + r * Math.sin(angle);
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = getNucleusColor(particle.dna.dietBias);
+          ctx.beginPath();
+          ctx.arc(x, y, size * 0.5, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.strokeStyle = `hsl(${particle.dna.subHue},80%,40%)`;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          if (particle.predationCue > 0) {
+            ctx.strokeStyle = "yellow";
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(x, y, size + 4, 0, 2 * Math.PI);
+            ctx.stroke();
+          }
+        },
+        behavior: (particle) => {
+          let baseAttraction = 1 - Math.abs(particle.dna.dietBias - 0.5) / 0.5;
+          let detectionRange = 100 + 50 * baseAttraction;
+          let predatorNearby = false;
+          for (let q of particles) {
+            if (q.type === 1) {
+              let dx = particle.x - q.x;
+              let dy = particle.y - q.y;
+              let d = Math.sqrt(dx * dx + dy * dy);
+              if (d < 40) { 
+                predatorNearby = true; 
+                break; 
+              }
+            }
+          }
+          let effectiveAttraction = predatorNearby ? baseAttraction * 0.5 : baseAttraction;
+          let availablePoops = [];
+          for (let p of poops) {
+            let dx = particle.x - p.x;
+            let dy = particle.y - p.y;
+            let d = Math.sqrt(dx * dx + dy * dy);
+            if (d < detectionRange) { 
+              availablePoops.push(p); 
+            }
+          }
+          if (availablePoops.length > 0 && Math.random() < effectiveAttraction) {
+            let targetX = 0, targetY = 0;
+            for (let p of availablePoops) {
+              targetX += p.x;
+              targetY += p.y;
+            }
+            targetX /= availablePoops.length;
+            targetY /= availablePoops.length;
+            let dx = targetX - particle.x;
+            let dy = targetY - particle.y;
+            let d = Math.sqrt(dx * dx + dy * dy);
+            if (d > 0) {
+              let multiplier = 0.02;
+              particle.vx += (dx / d) * multiplier;
+              particle.vy += (dy / d) * multiplier;
+            }
+            if (d < 5) {
+              addEnergy(particle, 2 * particle.dna.omniEfficiency);
+              let closest = availablePoops[0];
+              let closestD = Math.sqrt((availablePoops[0].x - targetX) ** 2 + (availablePoops[0].y - targetY) ** 2);
+              for (let p of availablePoops) {
+                let dd = Math.sqrt((p.x - targetX) ** 2 + (p.y - targetY) ** 2);
+                if (dd < closestD) { 
+                  closest = p; 
+                  closestD = dd; 
+                }
+              }
+              let idx = poops.indexOf(closest);
+              if (idx !== -1) { 
+                poops.splice(idx, 1); 
+              }
+              particle.absorbCue = 30;
+              return;
+            } else if (d < 10) {
+              addEnergy(particle, 2 * particle.dna.omniEfficiency);
+              let closest = availablePoops[0];
+              let closestD = Math.sqrt((availablePoops[0].x - targetX) ** 2 + (availablePoops[0].y - targetY) ** 2);
+              for (let p of availablePoops) {
+                let dd = Math.sqrt((p.x - targetX) ** 2 + (p.y - targetY) ** 2);
+                if (dd < closestD) { 
+                  closest = p; 
+                  closestD = dd; 
+                }
+              }
+              closest.lifetime -= 2;
+              particle.absorbCue = 30;
+              return;
+            }
+          }
+          let agility = getTrait(particle, "subHue", 20);
+          particle.vx += (Math.random() - 0.5) * agility / particle.size * 0.005;
+          particle.vy += (Math.random() - 0.5) * agility / particle.size * 0.005;
+          let bestScore = -Infinity;
+          let bestCandidate = null;
+          for (let other of particles) {
+            if (other === particle) continue;
+            if (other.type === 3) continue;
+            if (other.type === 1 && particle.energy <= other.energy) continue;
+            let dx = other.x - particle.x;
+            let dy = other.y - particle.y;
+            let distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance <= 0) continue;
+            let benefit = 0;
+            let risk = 1;
+            if (other.type === 0) {
+              benefit = (other.size / 10) * MIXO_MUNCH_DAMAGE * particle.dna.omniEfficiency;
+              risk = 1;
+            } else if (other.type === 2) {
+              benefit = (other.size / 10) * MIXO_HUNT_DAMAGE * particle.dna.omniEfficiency;
+              risk = 3;
+            } else if (other.type === 1) {
+              benefit = (other.size / 10) * MIXO_FIGHT_DAMAGE * particle.dna.omniEfficiency;
+              risk = 4;
+            }
+            if (particle.dna.dietBias < 0.5) {
+              if (other.type === 0) benefit *= 1.2;
+              else benefit *= 0.8;
+            } else {
+              if (other.type !== 0) benefit *= 1.2;
+              else benefit *= 0.8;
+            }
+            let score = benefit / (distance * risk);
+            if (score > bestScore) {
+              bestScore = score;
+              bestCandidate = other;
+            }
+          }
+          if (bestCandidate) {
+            let dx = bestCandidate.x - particle.x;
+            let dy = bestCandidate.y - particle.y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > 0) {
+              let multiplier = 0.01 * (bestCandidate.type === 0 ? 1.2 : 1.5);
+              particle.vx += (dx / dist) * multiplier;
+              particle.vy += (dy / dist) * multiplier;
+              if (dist < 10) {
+                let nibbleAmount = 0;
+                if (bestCandidate.type === 0) {
+                  nibbleAmount = MIXO_MUNCH_DAMAGE * (bestCandidate.size / 10) * particle.dna.omniEfficiency;
+                } else if (bestCandidate.type === 2) {
+                  nibbleAmount = MIXO_HUNT_DAMAGE * (bestCandidate.size / 10) * particle.dna.omniEfficiency;
+                } else if (bestCandidate.type === 1) {
+                  nibbleAmount = MIXO_FIGHT_DAMAGE * (bestCandidate.size / 10) * particle.dna.omniEfficiency;
+                }
+                bestCandidate.energy -= nibbleAmount;
+                addEnergy(particle, nibbleAmount);
+                particle.predationCue = 30;
+                if (bestCandidate.energy <= 0) {
+                  let index = particles.indexOf(bestCandidate);
+                  if (index !== -1) { 
+                    particles.splice(index, 1); 
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "Shelly",
+        draw: (ctx, x, y, particle) => {
+          const size = particle.size;
+          ctx.fillStyle = `hsl(${particle.dna.mainHue},70%,30%)`;
+          ctx.beginPath();
+          for (let i = 0; i < 6; i++) {
+            const angle = (2 * Math.PI * i) / 6;
+            const px = x + Math.cos(angle) * size;
+            const py = y + Math.sin(angle) * size;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = `hsl(${particle.dna.subHue},80%,70%)`;
+          ctx.beginPath();
+          ctx.arc(x, y, size * 0.5, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.fillStyle = `hsl(${particle.dna.detailHue},90%,50%)`;
+          ctx.beginPath();
+          ctx.arc(x, y, size * 0.2, 0, 2 * Math.PI);
+          ctx.fill();
+          if (particle.predationCue > 0) {
+            ctx.strokeStyle = "cyan";
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(x, y, size + 4, 0, 2 * Math.PI);
+            ctx.stroke();
+          }
+        },
+        behavior: (particle) => {
+          let evasion = getTrait(particle, "subHue", 120);
+          particle.vx += (Math.random() - 0.5) * evasion / particle.size * 0.01;
+          particle.vy += (Math.random() - 0.5) * evasion / particle.size * 0.01;
+          let target = null, minDist = 100;
+          for (let other of particles) {
+            if (other.type === 0) {
+              let dx = other.x - particle.x;
+              let dy = other.y - particle.y;
+              let d = Math.sqrt(dx * dx + dy * dy);
+              if (d < minDist) { 
+                minDist = d; 
+                target = other; 
+              }
+            }
+          }
+          if (target) {
+            let dx = target.x - particle.x;
+            let dy = target.y - particle.y;
+            let d = Math.sqrt(dx * dx + dy * dy);
+            if (d > 0) {
+              let huntMultiplier = 1.0;
+              if (particle.energy < 40) { 
+                huntMultiplier = 1.5; 
+              } else if (particle.energy > 100) { 
+                huntMultiplier = 0.5; 
+              }
+              particle.vx += (dx / d) * 0.02 * huntMultiplier;
+              particle.vy += (dy / d) * 0.02 * huntMultiplier;
+            }
+          }
+          if (particle.type === 2) {
+            let candidates = [];
+            for (let other of particles) {
+              if (other.type === 0) {
+                let dx = other.x - particle.x;
+                let dy = other.y - particle.y;
+                let d = Math.sqrt(dx * dx + dy * dy);
+                if (d < 10) {
+                  let nibbleEfficiency = getTrait(particle, "mainHue", 120);
+                  let defense = getTrait(other, "subHue", 120);
+                  let estimatedTransfer = 2 * nibbleEfficiency / defense * (other.size / 10);
+                  candidates.push({ target: other, estimatedTransfer: estimatedTransfer });
+                }
+              }
+            }
+            if (candidates.length > 0) {
+              let chosen;
+              if (Math.random() < 0.7) {
+                chosen = candidates.reduce((best, candidate) =>
+                  candidate.estimatedTransfer > best.estimatedTransfer ? candidate : best, candidates[0]);
+              } else {
+                chosen = candidates[Math.floor(Math.random() * candidates.length)];
+              }
+              if (Math.random() < SHELLY_NIBBLE_PROBABILITY) {
+                let transfer = chosen.estimatedTransfer * SHELLY_MUNCH_DAMAGE;
+                chosen.target.energy -= transfer;
+                addEnergy(particle, transfer);
+                particle.predationCue = 30;
+                particle.vx = 0;
+                particle.vy = 0;
+                if (chosen.target.energy <= 0) {
+                  let index = particles.indexOf(chosen.target);
+                  if (index !== -1) { 
+                    particles.splice(index, 1); 
+                  }
+                }
+              }
+            }
+          }
+          for (let poop of poops) {
+            let dx = particle.x - poop.x;
+            let dy = particle.y - poop.y;
+            let d = Math.sqrt(dx * dx + dy * dy);
+            if (d < 50 && d > 0) {
+              let rep = 0.05 * (1 - d / 50);
+              particle.vx += (dx / d) * rep;
+              particle.vy += (dy / d) * rep;
+            }
+          }
+        }
+      },
+      {
+        name: "Mixo",
+        draw: (ctx, x, y, particle) => {
+          const size = particle.size;
+          let grad = ctx.createRadialGradient(x, y, size * 0.2, x, y, size);
+          grad.addColorStop(0, `hsl(${particle.dna.mainHue},70%,50%)`);
+          grad.addColorStop(1, `hsl(${particle.dna.mainHue},70%,40%)`);
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          const points = 8;
+          for (let i = 0; i < points; i++) {
+            const angle = (i / points) * 2 * Math.PI;
+            const r = size * (1 + 0.2 * Math.sin(particle.age * 0.05 + i));
+            const px = x + r * Math.cos(angle);
+            const py = y + r * Math.sin(angle);
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = getNucleusColor(particle.dna.dietBias);
+          ctx.beginPath();
+          ctx.arc(x, y, size * 0.5, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.strokeStyle = `hsl(${particle.dna.subHue},80%,40%)`;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          if (particle.predationCue > 0) {
+            ctx.strokeStyle = "yellow";
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(x, y, size + 4, 0, 2 * Math.PI);
+            ctx.stroke();
+          }
+        },
+        behavior: (particle) => {
+          let baseAttraction = 1 - Math.abs(particle.dna.dietBias - 0.5) / 0.5;
+          let detectionRange = 100 + 50 * baseAttraction;
+          let predatorNearby = false;
+          for (let q of particles) {
+            if (q.type === 1) {
+              let dx = particle.x - q.x;
+              let dy = particle.y - q.y;
+              let d = Math.sqrt(dx * dx + dy * dy);
+              if (d < 40) { 
+                predatorNearby = true; 
+                break; 
+              }
+            }
+          }
+          let effectiveAttraction = predatorNearby ? baseAttraction * 0.5 : baseAttraction;
+          let availablePoops = [];
+          for (let p of poops) {
+            let dx = particle.x - p.x;
+            let dy = particle.y - p.y;
+            let d = Math.sqrt(dx * dx + dy * dy);
+            if (d < detectionRange) { 
+              availablePoops.push(p); 
+            }
+          }
+          if (availablePoops.length > 0 && Math.random() < effectiveAttraction) {
+            let targetX = 0, targetY = 0;
+            for (let p of availablePoops) {
+              targetX += p.x;
+              targetY += p.y;
+            }
+            targetX /= availablePoops.length;
+            targetY /= availablePoops.length;
+            let dx = targetX - particle.x;
+            let dy = targetY - particle.y;
+            let d = Math.sqrt(dx * dx + dy * dy);
+            if (d > 0) {
+              let multiplier = 0.02;
+              particle.vx += (dx / d) * multiplier;
+              particle.vy += (dy / d) * multiplier;
+            }
+            if (d < 5) {
+              addEnergy(particle, 2 * particle.dna.omniEfficiency);
+              let closest = availablePoops[0];
+              let closestD = Math.sqrt((availablePoops[0].x - targetX) ** 2 + (availablePoops[0].y - targetY) ** 2);
+              for (let p of availablePoops) {
+                let dd = Math.sqrt((p.x - targetX) ** 2 + (p.y - targetY) ** 2);
+                if (dd < closestD) { 
+                  closest = p; 
+                  closestD = dd; 
+                }
+              }
+              let idx = poops.indexOf(closest);
+              if (idx !== -1) { 
+                poops.splice(idx, 1); 
+              }
+              particle.absorbCue = 30;
+              return;
+            } else if (d < 10) {
+              addEnergy(particle, 2 * particle.dna.omniEfficiency);
+              let closest = availablePoops[0];
+              let closestD = Math.sqrt((availablePoops[0].x - targetX) ** 2 + (availablePoops[0].y - targetY) ** 2);
+              for (let p of availablePoops) {
+                let dd = Math.sqrt((p.x - targetX) ** 2 + (p.y - targetY) ** 2);
+                if (dd < closestD) { 
+                  closest = p; 
+                  closestD = dd; 
+                }
+              }
+              closest.lifetime -= 2;
+              particle.absorbCue = 30;
+              return;
+            }
+          }
+          let agility = getTrait(particle, "subHue", 20);
+          particle.vx += (Math.random() - 0.5) * agility / particle.size * 0.005;
+          particle.vy += (Math.random() - 0.5) * agility / particle.size * 0.005;
+          let bestScore = -Infinity;
+          let bestCandidate = null;
+          for (let other of particles) {
+            if (other === particle) continue;
+            if (other.type === 3) continue;
+            if (other.type === 1 && particle.energy <= other.energy) continue;
+            let dx = other.x - particle.x;
+            let dy = other.y - particle.y;
+            let distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance <= 0) continue;
+            let benefit = 0;
+            let risk = 1;
+            if (other.type === 0) {
+              benefit = (other.size / 10) * MIXO_MUNCH_DAMAGE * particle.dna.omniEfficiency;
+              risk = 1;
+            } else if (other.type === 2) {
+              benefit = (other.size / 10) * MIXO_HUNT_DAMAGE * particle.dna.omniEfficiency;
+              risk = 3;
+            } else if (other.type === 1) {
+              benefit = (other.size / 10) * MIXO_FIGHT_DAMAGE * particle.dna.omniEfficiency;
+              risk = 4;
+            }
+            if (particle.dna.dietBias < 0.5) {
+              if (other.type === 0) benefit *= 1.2;
+              else benefit *= 0.8;
+            } else {
+              if (other.type !== 0) benefit *= 1.2;
+              else benefit *= 0.8;
+            }
+            let score = benefit / (distance * risk);
+            if (score > bestScore) {
+              bestScore = score;
+              bestCandidate = other;
+            }
+          }
+          if (bestCandidate) {
+            let dx = bestCandidate.x - particle.x;
+            let dy = bestCandidate.y - particle.y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > 0) {
+              let multiplier = 0.01 * (bestCandidate.type === 0 ? 1.2 : 1.5);
+              particle.vx += (dx / dist) * multiplier;
+              particle.vy += (dy / dist) * multiplier;
+              if (dist < 10) {
+                let nibbleAmount = 0;
+                if (bestCandidate.type === 0) {
+                  nibbleAmount = MIXO_MUNCH_DAMAGE * (bestCandidate.size / 10) * particle.dna.omniEfficiency;
+                } else if (bestCandidate.type === 2) {
+                  nibbleAmount = MIXO_HUNT_DAMAGE * (bestCandidate.size / 10) * particle.dna.omniEfficiency;
+                } else if (bestCandidate.type === 1) {
+                  nibbleAmount = MIXO_FIGHT_DAMAGE * (bestCandidate.size / 10) * particle.dna.omniEfficiency;
+                }
+                bestCandidate.energy -= nibbleAmount;
+                addEnergy(particle, nibbleAmount);
+                particle.predationCue = 30;
+                if (bestCandidate.energy <= 0) {
+                  let index = particles.indexOf(bestCandidate);
+                  if (index !== -1) { 
+                    particles.splice(index, 1); 
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ];
+    
+    /***********************
+     * 6. PARTICLE CREATION & INITIALIZATION FUNCTIONS
+     ***********************/
+    function createParticleOfType(type) {
+      let baseHue, baseSubHue, baseDetailHue, baseSpikeHue;
+      if (type === 0) { // Goo
+        baseHue = 120; baseSubHue = 120; baseDetailHue = 120;
+      } else if (type === 1) { // Hairy
+        baseHue = 0; baseSubHue = 0; baseDetailHue = 60; baseSpikeHue = 60;
+      } else if (type === 2) { // Shelly
+        baseHue = 240; baseSubHue = 200; baseDetailHue = 220;
+      } else if (type === 3) { // Mixo
+        baseHue = 310; baseSubHue = 290; baseDetailHue = 0;
+      }
+      let initialEnergy, reproductionCooldown, baseSize;
+      if (type === 0) {
+        initialEnergy = 40; reproductionCooldown = 200; baseSize = 8;
+      } else if (type === 1) {
+        initialEnergy = HAIRY_INITIAL_ENERGY; reproductionCooldown = 300; baseSize = 10;
+      } else if (type === 2) {
+        initialEnergy = SHELLY_INITIAL_ENERGY; reproductionCooldown = 100; baseSize = 10;
+      } else if (type === 3) {
+        initialEnergy = OMNIVORE_INITIAL_ENERGY; reproductionCooldown = 250; baseSize = 10;
+      }
+      let spreadDefault = type === 0 ? 1 - (baseHue - 60) / 180 : undefined;
+      let dna = {
+        mainHue: baseHue,
+        subHue: baseSubHue,
+        detailHue: baseDetailHue
+      };
+      if (type === 1) {
+        dna.spikeHue = baseSpikeHue;
+      } else if (type === 0) {
+        dna.spread = spreadDefault;
+      } else if (type === 3) {
+        dna.omniEfficiency = 0.70;
+        dna.dietBias = 0.30;
+      }
+      return {
+        x: Math.random() * worldSize.width,
+        y: Math.random() * worldSize.height,
+        vx: (Math.random() - 0.5) * 2,
+        vy: (Math.random() - 0.5) * 2,
+        type: type,
+        age: Math.random() * 100,
+        baseSize: baseSize,
+        size: baseSize,
+        mutationRate: 0.2 + Math.random() * 0.1,
+        reproductionCooldown: reproductionCooldown,
+        predationCue: 0,
+        radiationCue: 0,
+        absorbCue: 0,
+        energy: initialEnergy,
+        radiationExposureCount: 0,
+        dna: dna
+      };
+    }
+    
+    function createParticleAtLocation(type, x, y) {
+      let p = createParticleOfType(type);
+      p.x = x;
+      p.y = y;
+      return p;
+    }
+    
+    function initializeParticles(count = 150) {
+      particles = [];
+      let firstHairy = createParticleOfType(1);
+      firstHairy.energy = 100;
+      particles.push(firstHairy);
+      particles.push(createParticleOfType(2));
+      particles.push(createParticleOfType(2));
+      particles.push(createParticleOfType(3));
+      particles.push(createParticleOfType(3));
+      while (particles.length < count) {
+        particles.push(createParticleOfType(0));
+      }
+    }
+    
+    /***********************
+     * 7. GENETIC MUTATION & REPRODUCTION FUNCTIONS
+     ***********************/
+    function mutateParticle(particle, factor = 1, forced = false) {
+      const mutationStrength = particle.mutationRate * GLOBAL_MUTATION_MULTIPLIER * factor * 0.4;
+      if (forced) {
+        particle.baseSize += (Math.random() - 0.5) * mutationStrength;
+        if (particle.type === 0) { 
+          particle.baseSize = clamp(particle.baseSize, 6, 10); 
+        } else { 
+          particle.baseSize = clamp(particle.baseSize, 8, 12); 
+        }
+        let multiplier = (particle.type !== 0) ? 3 : 2;
+        particle.dna.mainHue += (Math.random() - 0.5) * mutationStrength * multiplier;
+        particle.dna.subHue += (Math.random() - 0.5) * mutationStrength * multiplier;
+        particle.dna.detailHue += (Math.random() - 0.5) * mutationStrength * multiplier;
+        if (particle.type === 1) {
+          particle.dna.spikeHue += (Math.random() - 0.5) * mutationStrength * multiplier;
+        } else if (particle.type === 3) {
+          particle.dna.omniEfficiency += (Math.random() - 0.5) * 0.1;
+          particle.dna.dietBias += (Math.random() - 0.5) * 0.1;
+          particle.dna.dietBias = Math.min(1, Math.max(0, particle.dna.dietBias));
+        }
+        if (particle.type === 0) {
+          particle.dna.mainHue = clamp(particle.dna.mainHue, 75, 145);
+          particle.dna.subHue = clamp(particle.dna.subHue, 75, 145);
+          particle.dna.detailHue = clamp(particle.dna.detailHue, 75, 145);
+          particle.dna.spread = clamp(1 - (particle.dna.mainHue - 60) / 180, 0, 1);
+        }
+      }
+    }
+    
+    function reproduceParticle(parent) {
+      let offspringBaseSize = parent.baseSize + (Math.random() - 0.5) * 0.2;
+      if (parent.type === 0) { 
+        offspringBaseSize = clamp(offspringBaseSize, 6, 10); 
+      } else { 
+        offspringBaseSize = clamp(offspringBaseSize, 8, 12); 
+      }
+      return {
+        x: parent.x + (Math.random() - 0.5) * 20,
+        y: parent.y + (Math.random() - 0.5) * 20,
+        vx: (Math.random() - 0.5) * 2,
+        vy: (Math.random() - 0.5) * 2,
+        type: parent.type,
+        age: 0,
+        baseSize: offspringBaseSize,
+        size: offspringBaseSize,
+        mutationRate: parent.mutationRate,
+        reproductionCooldown: (parent.type === 0) ? 200 : (parent.type === 1 ? 200 : (parent.type === 2 ? 100 : 250)),
+        predationCue: 0,
+        radiationCue: 0,
+        energy: (parent.type === 1 ? HAIRY_INITIAL_ENERGY : (parent.type === 2 ? SHELLY_INITIAL_ENERGY : (parent.type === 3 ? OMNIVORE_INITIAL_ENERGY : 40))),
+        radiationExposureCount: 0,
+        dna: {
+          mainHue: parent.dna.mainHue + (Math.random() - 0.5) * 10,
+          subHue: parent.dna.subHue + (Math.random() - 0.5) * 10,
+          detailHue: parent.dna.detailHue + (Math.random() - 0.5) * 10,
+          spikeHue: (parent.type === 1 ? parent.dna.spikeHue + (Math.random() - 0.5) * 10 : parent.dna.detailHue),
+          spread: parent.type === 0 ? parent.dna.spread + (Math.random() - 0.5) * 0.05 : undefined,
+          omniEfficiency: parent.type === 3 ? parent.dna.omniEfficiency + (Math.random() - 0.5) * 0.1 : undefined,
+          dietBias: parent.type === 3 ? parent.dna.dietBias + (Math.random() - 0.5) * 0.1 : undefined
+        }
+      };
+    }
+    
+    /***********************
+     * 8. RADIATION, PLACEMENT & POOP MECHANICS
+     ***********************/
+    let radioactiveZones = [];
+    let poops = [];
+    let particles = [];
+    const maxPopulation = 1200;
+    let placementMode = false;
+    let placementType = null;
+    
+    document.getElementById('placeGoo').addEventListener("click", () => {
+      placementMode = true;
+      placementType = 0;
+      console.log("Placement mode: Place Goo. Click on canvas to place it.");
+    });
+    document.getElementById('placeHairy').addEventListener("click", () => {
+      placementMode = true;
+      placementType = 1;
+      console.log("Placement mode: Place Hairy. Click on canvas to place it.");
+    });
+    document.getElementById('placeShelly').addEventListener("click", () => {
+      placementMode = true;
+      placementType = 2;
+      console.log("Placement mode: Place Shelly. Click on canvas to place it.");
+    });
+    document.getElementById('placeOmnivore').addEventListener("click", () => {
+      placementMode = true;
+      placementType = 3;
+      console.log("Placement mode: Place Mixo. Click on canvas to place it.");
+    });
+    
+    canvas.addEventListener("click", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const clickX = (e.clientX - rect.left) * zoom;
+      const clickY = (e.clientY - rect.top) * zoom;
+      if (placementMode) {
+        particles.push(createParticleAtLocation(placementType, clickX, clickY));
+        placementMode = false;
+      } else {
+        radioactiveZones.push({ x: clickX, y: clickY, radius: 75, lifetime: 300 });
+        particles = particles.filter(particle => {
+          const dx = particle.x - clickX;
+          const dy = particle.y - clickY;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d < 75) {
+            particle.radiationExposureCount++;
+            if (particle.radiationExposureCount >= getTrait(particle, "subHue", 120)) {
+              return false;
+            }
+          }
+          return true;
+        });
+      }
+    });
+    
+    function createProcGenPoop(x, y, creatureSize) {
+      const numPoints = 12;
+      const points = [];
+      for (let i = 0; i < numPoints; i++) {
+        points.push(0.8 + 0.4 * Math.random());
+      }
+      return { x: x, y: y, lifetime: 500, radius: creatureSize * 0.5, points: points };
+    }
+    
+    function drawProcGenPoop(ctx, poop) {
+      const x = poop.x / zoom;
+      const y = poop.y / zoom;
+      const r = poop.radius / zoom;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.beginPath();
+      const total = poop.points.length;
+      for (let i = 0; i < total; i++) {
+        const angle = i * (2 * Math.PI / total);
+        let offset = r + r * 0.2 * Math.sin(angle * 3 + poop.points[i]);
+        let px = offset * Math.cos(angle);
+        let py = offset * Math.sin(angle);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      let grad = ctx.createRadialGradient(0, 0, r * 0.2, 0, 0, r);
+      grad.addColorStop(0, "#5b3a21");
+      grad.addColorStop(0.5, "#8b4513");
+      grad.addColorStop(1, "#a67c52");
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.restore();
+    }
+    
+    /***********************
+     * 9. MAIN SIMULATION LOOP
+     ***********************/
+    function update() {
+      ctx.fillStyle = "rgba(16,16,16,0.95)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      for (let i = radioactiveZones.length - 1; i >= 0; i--) {
+        const zone = radioactiveZones[i];
+        zone.lifetime -= simulationSpeed;
+        ctx.strokeStyle = `rgba(255,0,0,${zone.lifetime/300})`;
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(zone.x / zoom, zone.y / zoom, zone.radius / zoom, 0, 2 * Math.PI);
+        ctx.stroke();
+        if (zone.lifetime <= 0) { 
+          radioactiveZones.splice(i, 1); 
+        }
+      }
+      
+      for (let i = poops.length - 1; i >= 0; i--) {
+        const poop = poops[i];
+        poop.lifetime -= 1;
+        drawProcGenPoop(ctx, poop);
+        if (poop.lifetime <= 0) { 
+          poops.splice(i, 1); 
+        }
+      }
+      
+      for (let i = particles.length - 1; i >= 0; i--) {
+        let particle = particles[i];
+        particle.size = particle.baseSize + Math.sin(particle.age * 0.1) * (particle.baseSize * 0.05);
+        particle.energy -= 0.01 * simulationSpeed;
+        if (particle.energy < 0) { 
+          particle.energy = 0; 
+        }
+        particle.reproductionCooldown -= simulationSpeed;
+        particle.age += simulationSpeed;
+        
+        if (particle.type === 0) {
+          addEnergy(particle, GOO_PHOTOSYNTHESIS_RATE * simulationSpeed * 10);
+          for (let j = poops.length - 1; j >= 0; j--) {
+            let poop = poops[j];
+            const dx = particle.x - poop.x;
+            const dy = particle.y - poop.y;
+            const d = Math.sqrt(dx * dx + dy * dy);
+            if (d < 30) {
+              addEnergy(particle, 3);
+              poop.lifetime -= 1;
+              particle.absorbCue = 30;
+            }
+          }
+        }
+        
+        for (let zone of radioactiveZones) {
+          const dx = particle.x - zone.x;
+          const dy = particle.y - zone.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d < zone.radius) {
+            let radFactor = 5 + Math.random() * 5;
+            mutateParticle(particle, radFactor * simulationSpeed, true);
+            particle.radiationCue = 30;
+          }
+        }
+        
+        particleTypes[particle.type].behavior(particle);
+        
+        if (particle.type !== 0) {
+          let speed = Math.sqrt(particle.vx * particle.vx + particle.vy * particle.vy);
+          let maxSpeed = 3 / particle.size;
+          if (speed > maxSpeed) {
+            particle.vx = (particle.vx / speed) * maxSpeed;
+            particle.vy = (particle.vy / speed) * maxSpeed;
+          }
+          particle.x += particle.vx * simulationSpeed;
+          particle.y += particle.vy * simulationSpeed;
+        }
+        if (particle.x < 0) { 
+          particle.x = worldSize.width; 
+        }
+        if (particle.x > worldSize.width) { 
+          particle.x = 0; 
+        }
+        if (particle.y < 0) { 
+          particle.y = worldSize.height; 
+        }
+        if (particle.y > worldSize.height) { 
+          particle.y = 0; 
+        }
+        
+        if (particles.length < maxPopulation &&
+            particle.reproductionCooldown <= 0 &&
+            particle.age > 200 &&
+            (
+              (particle.type === 0 && particle.energy >= (particle.dna.mainHue < 80 ? 40 : 50)) ||
+              (particle.type === 1 && particle.energy >= 60) ||
+              (particle.type === 2 && particle.energy >= 80) ||
+              (particle.type === 3 && particle.energy >= (particle.dna.mainHue < 50 ? 40 : 50))
+            )
+        ) {
+          particles.push(reproduceParticle(particle));
+          if (particle.type === 0) {
+            let newCooldown = (250 - ((particle.dna.detailHue - 75) * 100 / 70)) * 0.9;
+            particle.reproductionCooldown = newCooldown;
+            particle.energy -= 20;
+          } else if (particle.type === 1) {
+            particle.reproductionCooldown = 200;
+            particle.energy -= 20;
+          } else if (particle.type === 2) {
+            particle.reproductionCooldown = 100;
+            particle.energy -= 40;
+          } else if (particle.type === 3) {
+            particle.reproductionCooldown = 250;
+            particle.energy -= 30;
+          }
+        }
+        
+        if (particle.type === 1 && Math.random() < 0.005) {
+          poops.push(createProcGenPoop(particle.x, particle.y, particle.size));
+        } else if (particle.type === 2 && Math.random() < 0.002) {
+          poops.push(createProcGenPoop(particle.x, particle.y, particle.size));
+        }
+        
+        particleTypes[particle.type].draw(ctx, particle.x / zoom, particle.y / zoom, particle);
+        if (particle.predationCue > 0) { 
+          particle.predationCue--; 
+        }
+        if (particle.radiationCue > 0) {
+          ctx.save();
+          const alpha = particle.radiationCue / 30;
+          ctx.strokeStyle = `rgba(255,0,255,${alpha})`;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(particle.x / zoom, particle.y / zoom, particle.size + 8, 0, 2 * Math.PI);
+          ctx.stroke();
+          ctx.restore();
+          particle.radiationCue--;
+        }
+        if (particle.type === 0 && particle.absorbCue > 0) {
+          ctx.save();
+          const alpha = particle.absorbCue / 30;
+          ctx.strokeStyle = `rgba(0,255,0,${alpha})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(particle.x / zoom, particle.y / zoom, particle.size + 6, 0, 2 * Math.PI);
+          ctx.stroke();
+          ctx.restore();
+          particle.absorbCue--;
+        }
+      }
+      
+      const mobRange = 30;
+      particles.forEach(particle => {
+        if (particle.type === 1 || particle.type === 3) {
+          let mobGroup = particles.filter(p => p.type === 2 && Math.hypot(p.x - particle.x, p.y - particle.y) < mobRange);
+          if (mobGroup.length >= SHELLY_MIN_MOB_SIZE) {
+            let mobDamageTotal = mobGroup.length * SHELLY_MOB_DAMAGE;
+            particle.energy -= mobDamageTotal;
+            mobGroup.forEach(p => { 
+              p.predationCue = 30; 
+            });
+          }
+        }
+      });
+      
+      particles = particles.filter(p => (p.type === 0) || (p.energy > 0));
+      debugDiv.textContent = "Population: " + particles.length;
+      if (particles.length === 0) {
+        console.warn("Population extinct. Reinitializing...");
+        initializeParticles(150);
+      }
+      if (poops.length > 200) { 
+        poops.splice(0, poops.length - 200); 
+      }
+      requestAnimationFrame(update);
+    }
+    update();
+    
+    /***********************
+     * 10. TOOLTIP & MOUSE/TOUCH EVENT HANDLERS
+     ***********************/
+    function handleTooltip(e) {
+      let clientX, clientY;
+      if (e.touches && e.touches.length > 0) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+      } else {
+        clientX = e.clientX;
+        clientY = e.clientY;
+      }
+      const worldX = clientX * zoom;
+      const worldY = clientY * zoom;
+      let minDist = Infinity;
+      let selected = null;
+      for (let particle of particles) {
+        let dx = particle.x - worldX;
+        let dy = particle.y - worldY;
+        let dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < minDist) { 
+          minDist = dist; 
+          selected = particle; 
+        }
+      }
+      if (selected && minDist < 15) {
+        tooltipDiv.style.display = "block";
+        tooltipDiv.style.left = (clientX + 10) + "px";
+        tooltipDiv.style.top = (clientY + 10) + "px";
+        let typeName = particleTypes[selected.type].name;
+        if (selected.type === 1) {
+          tooltipDiv.innerHTML =
+            `<strong>${typeName}</strong><br>` +
+            `Behavior (Aggression): ${selected.dna.mainHue.toFixed(1)}<br>` +
+            `Agility: ${selected.dna.subHue.toFixed(1)}<br>` +
+            `Fighting Persistence: ${selected.dna.detailHue.toFixed(1)}<br>` +
+            `Spike Combat Efficiency: ${selected.dna.spikeHue.toFixed(1)}`;
+        } else if (selected.type === 0) {
+          tooltipDiv.innerHTML =
+            `<strong>${typeName}</strong><br>` +
+            `Nutrient Value: ${selected.dna.mainHue.toFixed(1)}<br>` +
+            `Defensive Toughness: ${selected.dna.subHue.toFixed(1)}<br>` +
+            `Growth Rate: ${selected.dna.detailHue.toFixed(1)}<br>` +
+            `Spread: ${selected.dna.spread.toFixed(2)}`;
+        } else if (selected.type === 3) {
+          let prefText = selected.dna.dietBias < 0.5 ? "Goo-herbivore" : "Meat-eater";
+          tooltipDiv.innerHTML =
+            `<strong>Mixo</strong><br>` +
+            `Foraging Efficiency: ${selected.dna.omniEfficiency.toFixed(2)}<br>` +
+            `Agility: ${selected.dna.subHue.toFixed(1)}<br>` +
+            `Digestive Persistence: ${selected.dna.detailHue.toFixed(1)}<br>` +
+            `Diet Bias: ${selected.dna.dietBias.toFixed(2)} (${prefText})<br>` +
+            `Munch Damage: ${MIXO_MUNCH_DAMAGE.toFixed(0)}<br>` +
+            `Hunt Damage: ${MIXO_HUNT_DAMAGE.toFixed(0)}<br>` +
+            `Fight Damage: ${MIXO_FIGHT_DAMAGE.toFixed(0)}`;
+        } else {
+          tooltipDiv.innerHTML =
+            `<strong>${typeName}</strong><br>` +
+            `${statLabels[selected.type].main}: ${selected.dna.mainHue.toFixed(1)}<br>` +
+            `${statLabels[selected.type].sub}: ${selected.dna.subHue.toFixed(1)}<br>` +
+            `${statLabels[selected.type].detail}: ${selected.dna.detailHue.toFixed(1)}`;
+        }
+      } else {
+        tooltipDiv.style.display = "none";
+      }
+    }
+    document.addEventListener("mousemove", handleTooltip);
+    document.addEventListener("touchstart", handleTooltip);
+    document.addEventListener("touchmove", handleTooltip);
+    document.addEventListener("touchend", () => { tooltipDiv.style.display = "none"; });
+    document.addEventListener("touchcancel", () => { tooltipDiv.style.display = "none"; });
+    
+    /***********************
+     * 11. SCREEN SIZE ADJUSTMENTS FOR HAIRY CRITTERS (Based on Window Area)
+     ***********************/
+    // We now base the scaling on window area.
+    // Reference area for a "big" screen: 1200×800 = 960,000.
+    // Minimum area (for a very small screen): 360×640 = 230,400.
+    // Previously, the scale ranged from 1 to 2.0.
+    // Now, to dial it back just a smidge, the maximum scale is set to 1.8.
+    function adjustHairyStatsForScreen() {
+      const referenceArea = 1200 * 800;   // 960,000 (big screen)
+      const minArea = 360 * 640;            // 230,400 (small screen)
+      const baseEnergy = 50;
+      const baseNibble = 0.50;
+      let currentArea = window.innerWidth * window.innerHeight;
+      let scale;
+      if (currentArea >= referenceArea) {
+         scale = 1;
+      } else if (currentArea <= minArea) {
+         scale = 1.8;  // Maximum scale now 1.8 instead of 2.0
+      } else {
+         // Linear interpolation between scale 1 and 1.8
+         scale = 1 + ((referenceArea - currentArea) / (referenceArea - minArea)) * (1.8 - 1);
+      }
+      HAIRY_INITIAL_ENERGY = baseEnergy * scale;
+      HAIRY_NIBBLE_PROBABILITY = baseNibble * scale;
+      const hairEnergySlider = document.getElementById('hairyEnergySlider');
+      hairEnergySlider.value = HAIRY_INITIAL_ENERGY;
+      hairyEnergyDisplay.textContent = HAIRY_INITIAL_ENERGY.toFixed(0);
+      const hairyNibbleSlider = document.getElementById('hairyNibbleSlider');
+      hairyNibbleSlider.value = HAIRY_NIBBLE_PROBABILITY;
+      hairyNibbleDisplay.textContent = HAIRY_NIBBLE_PROBABILITY.toFixed(2);
+    }
+    adjustHairyStatsForScreen();
+    
+    /***********************
+     * 12. INITIALIZE PARTICLE POPULATION
+     ***********************/
+    initializeParticles(150);
+    
+    /***********************
+     * WINDOW RESIZE EVENT HANDLER
+     ***********************/
+    window.addEventListener('resize', () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      worldSize.width = canvas.width * zoom;
+      worldSize.height = canvas.height * zoom;
+      adjustHairyStatsForScreen();
+      // Optionally, update existing Hairy particles.
+      particles.forEach(p => {
+        if (p.type === 1) {
+          p.energy = HAIRY_INITIAL_ENERGY;
+        }
+      });
+    });
+    
+  </script>
+</body>
+</html>
