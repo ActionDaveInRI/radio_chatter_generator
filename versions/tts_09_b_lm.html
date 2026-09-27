@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Radio Chatter – Tuned LLM Simulation Debug</title>
+  <style>
+    body {
+      font-family: monospace;
+      background-color: #111;
+      color: #0f0;
+      padding: 20px;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    #controls {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    button, input[type="range"] {
+      padding: 10px 15px;
+      margin: 5px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    #log {
+      border: 1px solid #0f0;
+      padding: 10px;
+      height: 300px;
+      overflow-y: auto;
+      background-color: #000;
+    }
+    #log p {
+      margin: 5px 0;
+    }
+    #status {
+      text-align: center;
+      margin-top: 10px;
+      font-style: italic;
+    }
+    .control-label {
+      margin-right: 10px;
+    }
+    /* Custom colors for specific call signs */
+    .log-Alpha { color: cyan; }
+    .log-Bravo { color: #FFBF00; }
+    /* Progress Bar Styling */
+    #progressContainer {
+      width: 100%;
+      background: #333;
+      height: 20px;
+      margin: 10px 0;
+      display: none;
+      border: 1px solid #0f0;
+    }
+    #progressBar {
+      width: 0%;
+      height: 100%;
+      background: #0f0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Radio Chatter – Tuned LLM Simulation Debug</h1>
+  <div id="controls">
+    <button id="startSim">Start Simulation</button>
+    <button id="stopSim">Stop Simulation</button>
+    <button id="clearLog">Clear Log</button>
+    <label class="control-label" for="delayMultiplier">Delay Multiplier:</label>
+    <input type="range" id="delayMultiplier" min="0.5" max="3.0" step="0.1" value="1.0">
+    <span id="multiplierValue">1.0</span>
+  </div>
+  <!-- Progress Bar Container -->
+  <div id="progressContainer">
+    <div id="progressBar"></div>
+  </div>
+  <div id="log"></div>
+  <div id="status"></div>
+
+  <!-- Load transformers.js as an ES module from jsDelivr -->
+  <script type="module">
+    // Import the pipeline function from transformers.js.
+    import { pipeline } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@latest/dist/transformers.min.js';
+
+    /***********************
+     * Global Variables & Helpers
+     ***********************/
+    let simulationRunning = false;
+    let audioCtx;
+    let lastMessage = null;
+    let environmentCondition = "clear";
+    let timeOfDay = "day";
+
+    // Hard‑coded operator profiles.
+    const users = [
+      { 
+        callSign: "Alpha",  
+        pitch: 0.8, 
+        rate: 1.0, 
+        voice: null, 
+        style: "formal", 
+        mood: "calm",
+        profile: "I am Alpha—a serious, methodical operator known for clear, formal transmissions." 
+      },
+      { 
+        callSign: "Bravo",  
+        pitch: 1.2, 
+        rate: 1.1, 
+        voice: null, 
+        style: "casual", 
+        mood: "agitated",
+        profile: "I am Bravo—an upbeat operator who mixes friendly banter with clear updates in a casual tone." 
+      },
+      { 
+        callSign: "Charlie", 
+        pitch: 0.9, 
+        rate: 0.9, 
+        voice: null, 
+        style: "mixed", 
+        mood: "reflective",
+        profile: "I am Charlie—a thoughtful operator who blends formal clarity with occasional personal insights." 
+      }
+    ];
+
+    function updateStatus(message) {
+      document.getElementById('status').textContent = message;
+    }
+
+    /***********************
+     * Progress Bar Functions
+     ***********************/
+    function showProgressBar() {
+      document.getElementById('progressContainer').style.display = 'block';
+      updateProgressBar(0);
+    }
+    function updateProgressBar(percent) {
+      document.getElementById('progressBar').style.width = percent + '%';
+    }
+    function hideProgressBar() {
+      document.getElementById('progressContainer').style.display = 'none';
+    }
+
+    /***********************
+     * Voice Assignment
+     ***********************/
+    let availableVoices = [];
+    function assignPreferredVoices() {
+      let platform = "unknown";
+      const ua = navigator.userAgent;
+      if (/Android/i.test(ua)) { platform = "android"; }
+      else if (/iPhone|iPad|iPod/i.test(ua)) { platform = "ios"; }
+      else if (/Macintosh/i.test(ua)) { platform = "mac"; }
+      console.log("Platform detected:", platform);
+      users.forEach((user, index) => {
+        let voice = null;
+        if (platform === "ios") {
+          let iosVoices = availableVoices.filter(v => v.lang.startsWith("en"));
+          voice = iosVoices.length > 0 ? iosVoices[index % iosVoices.length] : availableVoices[index % availableVoices.length];
+        } else if (platform === "android") {
+          voice = availableVoices.find(v => v.name.includes("Google"));
+        } else if (platform === "mac") {
+          voice = availableVoices.find(v => v.name === "Alex") || availableVoices.find(v => v.name === "Samantha");
+        }
+        if (!voice) { voice = availableVoices[index % availableVoices.length]; }
+        user.voice = voice;
+        console.log(`Assigned ${user.callSign} voice: ${voice ? voice.name : 'default'}`);
+      });
+      updateStatus(`Voices assigned for platform: ${platform}.`);
+    }
+    function assignUserVoices() {
+      availableVoices = window.speechSynthesis.getVoices();
+      if (availableVoices.length === 0) {
+        updateStatus("No voices available. Waiting for voiceschanged event.");
+        window.speechSynthesis.onvoiceschanged = () => {
+          availableVoices = window.speechSynthesis.getVoices();
+          assignPreferredVoices();
+        };
+      } else {
+        assignPreferredVoices();
+      }
+    }
+
+    /***********************
+     * Environment & Day/Night Functions
+     ***********************/
+    function updateEnvironment() {
+      const conditions = ["sunny", "clear", "cloudy", "rainy", "stormy", "hot", "cold", "windy", "foggy", "snowy"];
+      environmentCondition = conditions[Math.floor(Math.random() * conditions.length)];
+      console.log("Environment updated to:", environmentCondition);
+    }
+    function updateTimeOfDay() {
+      timeOfDay = (timeOfDay === "day") ? "night" : "day";
+      console.log("Time of day updated to:", timeOfDay);
+    }
+
+    /***********************
+     * LLM via transformers.js with Further Tuning
+     ***********************/
+    let generator;  // This will hold our text-generation function.
+    async function loadGenerator() {
+      if (!generator) {
+        showProgressBar();
+        updateStatus("Loading LLM model...");
+        let simulatedProgress = 0;
+        const progressInterval = setInterval(() => {
+          simulatedProgress += Math.random() * 10;
+          if (simulatedProgress > 95) simulatedProgress = 95;
+          updateProgressBar(simulatedProgress);
+        }, 300);
+        try {
+          // Load GPT‑2 (Xenova/gpt2) via transformers.js.
+          generator = await pipeline('text-generation', 'Xenova/gpt2');
+        } catch (err) {
+          console.error("Error loading model:", err);
+          updateStatus("Error loading LLM model.");
+          clearInterval(progressInterval);
+          hideProgressBar();
+          return;
+        }
+        clearInterval(progressInterval);
+        updateProgressBar(100);
+        setTimeout(() => { hideProgressBar(); }, 500);
+        updateStatus("LLM model loaded.");
+        console.log("LLM model loaded:", generator);
+      }
+    }
+
+    // Function to clean up generated messages.
+    function cleanUpMessage(message) {
+      // Remove any text in brackets or expletives (basic filter)
+      message = message.replace(/\[.*?\]/g, ""); // Remove bracketed text.
+      message = message.replace(/[\s]+/g, " ").trim(); // Normalize spaces.
+      // If the message is very long, trim it after the last complete sentence.
+      const sentences = message.split(/(?<=[.!?])\s+/);
+      if (sentences.length > 1) {
+        // Use the first two sentences if they total a reasonable length.
+        let candidate = sentences.slice(0, 2).join(" ");
+        if (candidate.length < message.length) {
+          message = candidate;
+        }
+      }
+      // Further remove any trailing fragments.
+      message = message.replace(/(The only|The following sequence|clean, and)/i, "").trim();
+      return message;
+    }
+
+    // Generate a transmission message using our refined prompt and parameters.
+    async function generateLLMMessage(sender, forcedReceiver) {
+      const prompt = `Operator: ${sender.callSign}
+Profile: ${sender.profile}
+Environment: ${environmentCondition}; Time: ${timeOfDay}.
+Previous Transmission: ${lastMessage ? lastMessage.message : "None"}.
+Transmission:`;
+      console.log("LLM prompt sent to GPT‑2:", prompt);
+      try {
+        const results = await generator(prompt, { 
+          max_length: 120,         // Increased maximum length
+          temperature: 0.5,         // Lower temperature for more deterministic output
+          top_p: 0.9, 
+          repetition_penalty: 1.3   // Higher penalty to discourage echoing
+        });
+        console.log("Full raw GPT‑2 results:");
+        console.dir(results);
+        let candidate = results[0].generated_text.trim();
+        console.log("Raw candidate message:", candidate);
+        
+        // Remove any prompt bleed if the generated text begins with the prompt.
+        if (candidate.startsWith(prompt)) {
+          candidate = candidate.substring(prompt.length).trim();
+        }
+        // Ensure the candidate ends with proper punctuation.
+        if (!/[.!?]$/.test(candidate)) {
+          candidate += ".";
+        }
+        // If the candidate is too short or contains too much prompt text, use a fallback.
+        if (candidate.length < 30 || candidate.toLowerCase().includes("transmission:")) {
+          console.warn("Candidate message is trivial or incomplete; using fallback.");
+          const fallbackMessages = [
+            "All systems nominal.",
+            "No anomalies detected.",
+            "Routine check complete.",
+            "Standby for further instructions."
+          ];
+          candidate = fallbackMessages[Math.floor(Math.random() * fallbackMessages.length)];
+        }
+        // Clean up verbose or unwanted language.
+        candidate = cleanUpMessage(candidate);
+        // Append environmental condition if it isn’t mentioned and it isn’t "clear".
+        if (environmentCondition !== "clear" &&
+            candidate.toLowerCase().indexOf(environmentCondition.toLowerCase()) === -1) {
+          candidate += ` (${environmentCondition} conditions)`;
+        }
+        console.log("Extracted final candidate message:", candidate);
+        return candidate;
+      } catch (err) {
+        console.error("LLM generation error:", err);
+        return "Error generating message.";
+      }
+    }
+
+    /***********************
+     * Audio & Interference Functions
+     ***********************/
+    function makeNonlinearCurve(amount = 3) {
+      const samples = 1024;
+      const curve = new Float32Array(samples);
+      for (let i = 0; i < samples; i++) {
+        let x = (i * 2) / samples - 1;
+        curve[i] = Math.sign(x) * Math.pow(Math.abs(x), amount);
+      }
+      return curve;
+    }
+    
+    function playCharacterNoise(user) {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+      }
+      const duration = 10;
+      const sampleRate = audioCtx.sampleRate, bufferSize = sampleRate * duration;
+      const noiseBuffer = audioCtx.createBuffer(1, bufferSize, sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      const noiseSource = audioCtx.createBufferSource();
+      noiseSource.buffer = noiseBuffer;
+      noiseSource.loop = true;
+      const filter = audioCtx.createBiquadFilter();
+      if (user.callSign === "Alpha") {
+        filter.type = "lowpass";
+        filter.frequency.setValueAtTime(500, audioCtx.currentTime);
+      } else if (user.callSign === "Bravo") {
+        filter.type = "bandpass";
+        filter.frequency.setValueAtTime(2000, audioCtx.currentTime);
+        filter.Q.setValueAtTime(1.0, audioCtx.currentTime);
+      } else if (user.callSign === "Charlie") {
+        filter.type = "highpass";
+        filter.frequency.setValueAtTime(1500, audioCtx.currentTime);
+      } else {
+        filter.type = "bandpass";
+        filter.frequency.setValueAtTime(1000, audioCtx.currentTime);
+      }
+      const gainNode = audioCtx.createGain();
+      gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+      noiseSource.connect(filter);
+      filter.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      noiseSource.start();
+      return noiseSource;
+    }
+    
+    function playCommBlip() {
+      if (!audioCtx) return;
+      const blipOsc = audioCtx.createOscillator();
+      const blipGain = audioCtx.createGain();
+      blipOsc.frequency.setValueAtTime(1200, audioCtx.currentTime);
+      blipGain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      blipOsc.connect(blipGain);
+      blipGain.connect(audioCtx.destination);
+      blipOsc.start();
+      blipGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+      blipOsc.stop(audioCtx.currentTime + 0.15);
+    }
+    
+    function startInterference() {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+      }
+      const sampleRate = audioCtx.sampleRate, bufferSize = sampleRate * 10;
+      const noiseBuffer = audioCtx.createBuffer(1, bufferSize, sampleRate);
+      const output = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        output[i] = Math.random() * 2 - 1;
+      }
+      // Basic continuous noise.
+      const basicNoiseSource = audioCtx.createBufferSource();
+      basicNoiseSource.buffer = noiseBuffer;
+      basicNoiseSource.loop = true;
+      const basicFilter = audioCtx.createBiquadFilter();
+      basicFilter.type = "bandpass";
+      basicFilter.frequency.setValueAtTime(3000, audioCtx.currentTime);
+      basicFilter.Q.setValueAtTime(1, audioCtx.currentTime);
+      const basicGain = audioCtx.createGain();
+      basicGain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+      basicNoiseSource.connect(basicFilter);
+      basicFilter.connect(basicGain);
+      basicGain.connect(audioCtx.destination);
+      basicNoiseSource.start();
+      
+      // Advanced noise with LFO modulation.
+      const advancedNoiseSource = audioCtx.createBufferSource();
+      advancedNoiseSource.buffer = noiseBuffer;
+      advancedNoiseSource.loop = true;
+      const advancedFilter = audioCtx.createBiquadFilter();
+      advancedFilter.type = "bandpass";
+      advancedFilter.frequency.setValueAtTime(2500, audioCtx.currentTime);
+      advancedFilter.Q.setValueAtTime(1.5, audioCtx.currentTime);
+      const advancedGain = audioCtx.createGain();
+      advancedGain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+      const lfo = audioCtx.createOscillator();
+      lfo.frequency.setValueAtTime(0.5, audioCtx.currentTime);
+      const lfoGain = audioCtx.createGain();
+      lfoGain.gain.setValueAtTime(0.03, audioCtx.currentTime);
+      const nonLinearShaper = audioCtx.createWaveShaper();
+      nonLinearShaper.curve = makeNonlinearCurve(3);
+      nonLinearShaper.oversample = '4x';
+      lfo.connect(lfoGain);
+      lfoGain.connect(nonLinearShaper);
+      nonLinearShaper.connect(advancedGain.gain);
+      lfo.start();
+      advancedNoiseSource.connect(advancedFilter);
+      advancedFilter.connect(advancedGain);
+      advancedGain.connect(audioCtx.destination);
+      advancedNoiseSource.start();
+    }
+    
+    function triggerBurstInterference() {
+      if (!audioCtx) return;
+      const burstDuration = 0.1, sampleRate = audioCtx.sampleRate;
+      const burstBuffer = audioCtx.createBuffer(1, sampleRate * burstDuration, sampleRate);
+      const burstData = burstBuffer.getChannelData(0);
+      for (let i = 0; i < burstBuffer.length; i++) {
+        burstData[i] = Math.random() * 2 - 1;
+      }
+      const burstSource = audioCtx.createBufferSource();
+      burstSource.buffer = burstBuffer;
+      const burstGain = audioCtx.createGain();
+      burstGain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      burstGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + burstDuration);
+      const burstFilter = audioCtx.createBiquadFilter();
+      burstFilter.type = "highpass";
+      burstFilter.frequency.setValueAtTime(2000, audioCtx.currentTime);
+      burstSource.connect(burstFilter);
+      burstFilter.connect(burstGain);
+      burstGain.connect(audioCtx.destination);
+      burstSource.start();
+      burstSource.stop(audioCtx.currentTime + burstDuration);
+    }
+    
+    function scheduleBurstInterference() {
+      if (!simulationRunning) return;
+      const burstInterval = Math.random() * 3000 + 2000;
+      setTimeout(() => {
+        triggerBurstInterference();
+        scheduleBurstInterference();
+      }, burstInterval);
+    }
+
+    /***********************
+     * Simulation Control & Transmission
+     ***********************/
+    async function startSimulation() {
+      if (simulationRunning) return;
+      simulationRunning = true;
+      console.log("Simulation starting...");
+
+      // Load voices.
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length === 0) {
+        updateStatus("Loading voices...");
+        window.speechSynthesis.onvoiceschanged = () => { assignUserVoices(); };
+      } else {
+        assignUserVoices();
+      }
+
+      // Load the LLM model.
+      await loadGenerator();
+
+      updateStatus("Voices & LLM ready. Starting simulation...");
+      simulateTransmission();
+
+      startInterference();
+      scheduleBurstInterference();
+      setInterval(updateEnvironment, 60000);
+      setInterval(updateTimeOfDay, 30000);
+
+      // Resume audio context if suspended.
+      setInterval(() => {
+        if (audioCtx && audioCtx.state === 'suspended') {
+          audioCtx.resume().then(() => { console.log("Audio context resumed"); })
+            .catch((err) => { console.error("Error resuming audio context:", err); });
+        }
+      }, 10000);
+
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && audioCtx && audioCtx.state === 'suspended') {
+          audioCtx.resume().then(() => { console.log("Audio context resumed on visibility change"); });
+        }
+      });
+    }
+    
+    function stopSimulation() {
+      simulationRunning = false;
+      window.speechSynthesis.cancel();
+      updateStatus("Simulation stopped.");
+      console.log("Simulation stopped.");
+    }
+    
+    async function simulateTransmission() {
+      if (!simulationRunning) return;
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+        console.log("Audio context created.");
+      }
+      
+      let sender, forcedReceiver = null;
+      // Determine if this is a direct reply.
+      if (lastMessage &&
+          !lastMessage.broadcast &&
+          lastMessage.receiver &&
+          lastMessage.receiver.callSign !== "all units" &&
+          Math.random() < 0.7) {
+        sender = lastMessage.receiver;
+        forcedReceiver = lastMessage.sender;
+        console.log(`Direct response: ${sender.callSign} replying to ${forcedReceiver.callSign}`);
+      } else {
+        let possibleSenders = users;
+        if (lastMessage) {
+          possibleSenders = users.filter(u => u.callSign !== lastMessage.sender.callSign);
+        }
+        sender = possibleSenders[Math.floor(Math.random() * possibleSenders.length)];
+        console.log(`New transmission from: ${sender.callSign}`);
+      }
+      
+      // Occasionally trigger a scripted event.
+      if (!forcedReceiver && Math.random() < 0.1) {
+        const eventMsg = "Attention all stations: a system update is incoming.";
+        const logDiv = document.getElementById('log');
+        const p = document.createElement('p');
+        p.textContent = eventMsg;
+        logDiv.appendChild(p);
+        logDiv.scrollTop = logDiv.scrollHeight;
+        console.log("Scripted event triggered:", eventMsg);
+        const eventDelay = 3000 * parseFloat(document.getElementById("delayMultiplier").value);
+        setTimeout(() => { if (simulationRunning) simulateTransmission(); }, eventDelay);
+        return;
+      }
+      
+      const message = await generateLLMMessage(sender, forcedReceiver);
+      const broadcast = (forcedReceiver == null);
+      console.log("Final generated message:", message);
+      
+      const logDiv = document.getElementById('log');
+      const p = document.createElement('p');
+      p.textContent = message;
+      if (sender.callSign === "Alpha") { p.classList.add("log-Alpha"); }
+      else if (sender.callSign === "Bravo") { p.classList.add("log-Bravo"); }
+      logDiv.appendChild(p);
+      logDiv.scrollTop = logDiv.scrollHeight;
+      
+      const utterance = new SpeechSynthesisUtterance(message);
+      utterance.lang = 'en-US';
+      utterance.pitch = sender.pitch;
+      utterance.rate = sender.rate;
+      if (sender.voice) { utterance.voice = sender.voice; }
+      
+      let charNoiseSource = null;
+      utterance.onstart = function() {
+        playCommBlip();
+        charNoiseSource = playCharacterNoise(sender);
+      };
+      
+      utterance.onend = function() {
+        playCommBlip();
+        if (charNoiseSource) {
+          try { charNoiseSource.stop(); } catch (e) { console.error("Error stopping noise:", e); }
+        }
+        const multiplier = parseFloat(document.getElementById("delayMultiplier").value);
+        const delay = (Math.random() * 4000 + 6000) * multiplier;
+        console.log(`Next message in ${(delay / 1000).toFixed(1)} seconds.`);
+        setTimeout(() => { if (simulationRunning) simulateTransmission(); }, delay);
+      };
+      
+      window.speechSynthesis.speak(utterance);
+      
+      let receiverObj = forcedReceiver ? forcedReceiver : { callSign: "all units" };
+      lastMessage = {
+        sender: sender,
+        receiver: receiverObj,
+        broadcast: broadcast,
+        message: message,
+        isResponse: (forcedReceiver !== null)
+      };
+    }
+    
+    /***********************
+     * UI Event Listeners
+     ***********************/
+    document.getElementById('startSim').addEventListener('click', () => { startSimulation(); });
+    document.getElementById('stopSim').addEventListener('click', stopSimulation);
+    document.getElementById('clearLog').addEventListener('click', () => { document.getElementById('log').innerHTML = ""; });
+    document.getElementById('delayMultiplier').addEventListener('input', (event) => {
+      document.getElementById('multiplierValue').textContent = event.target.value;
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Multi-User Radio Chatter – Conversation Chains with Natural Flow</title>
+  <style>
+    body {
+      font-family: monospace;
+      background-color: #111;
+      color: #0f0;
+      padding: 20px;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    #controls {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    button {
+      padding: 10px 15px;
+      margin: 0 5px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    #log {
+      border: 1px solid #0f0;
+      padding: 10px;
+      height: 300px;
+      overflow-y: auto;
+      background-color: #000;
+    }
+    #log p {
+      margin: 5px 0;
+    }
+    #status {
+      text-align: center;
+      margin-top: 10px;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <h1>Multi-User Radio Chatter – Conversation Chains with Natural Flow</h1>
+  <div id="controls">
+    <button id="startSim">Start Simulation</button>
+    <button id="stopSim">Stop Simulation</button>
+  </div>
+  <div id="log"></div>
+  <div id="status"></div>
+  
+  <script>
+    /***********************
+     * Utility Functions
+     ***********************/
+    // Create a nonlinear curve (used for advanced static modulation)
+    function makeNonlinearCurve(amount = 3) {
+      const samples = 1024;
+      const curve = new Float32Array(samples);
+      for (let i = 0; i < samples; i++) {
+        let x = (i * 2) / samples - 1;
+        curve[i] = Math.sign(x) * Math.pow(Math.abs(x), amount);
+      }
+      return curve;
+    }
+    
+    // Generate a dynamic location string.
+    function generateFormalLocation() {
+      const directions = ["northern", "southern", "eastern", "western", "central"];
+      const locationTypes = ["corridor", "sector", "grid", "zone", "range"];
+      const direction = directions[Math.floor(Math.random() * directions.length)];
+      const type = locationTypes[Math.floor(Math.random() * locationTypes.length)];
+      
+      if (type === "sector" || type === "zone" || type === "corridor" || type === "range") {
+        let number = Math.floor(Math.random() * 10) + 1; // 1-10
+        return `${direction} ${type} ${number}`;
+      } else if (type === "grid") {
+        let number = Math.floor(Math.random() * 10) + 1;
+        let letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        let letter = letters[Math.floor(Math.random() * letters.length)];
+        return `grid ${number}${letter}`;
+      } else {
+        return `${direction} ${type}`;
+      }
+    }
+    
+    /***********************
+     * Global Variables
+     ***********************/
+    let audioCtx;
+    let basicNoiseSource = null;
+    let advancedNoiseSource = null;
+    let lfo = null;
+    let simulationRunning = false;
+    let availableVoices = [];
+    let burstInterferenceTimer = null;  // Timer for burst interference
+    let lastMessage = null;             // For conversational linking
+    // Active conversation thread: { topic: string, count: number, lastSpeaker: string }
+    let activeConversation = null;
+    // Global environmental condition (could later affect dialogue)
+    let environmentCondition = "clear";
+    
+    function updateStatus(message) {
+      document.getElementById('status').textContent = message;
+    }
+    
+    /***********************
+     * Simulated Radio Users
+     ***********************/
+    // Each user has a call sign, voice settings, a chance to broadcast, a style, and a mood.
+    const users = [
+      { callSign: "Alpha",  pitch: 0.8, rate: 1.0, voice: null, broadcastChance: 0.2, style: "formal", mood: "calm" },
+      { callSign: "Bravo",  pitch: 1.2, rate: 1.1, voice: null, broadcastChance: 0.7, style: "casual", mood: "agitated" },
+      { callSign: "Charlie", pitch: 0.9, rate: 0.9, voice: null, broadcastChance: 0.3, style: "mixed", mood: "reflective" }
+    ];
+    
+    /***********************
+     * Expanded Dialogue Libraries (Ambiguous Content)
+     ***********************/
+    // Standard structured phrases (formal)
+    const formalObservations = [
+      "our analysis indicates unusual activity",
+      "intel confirms a pattern of erratic signals",
+      "surveillance reports reveal increased communication",
+      "our sensors have detected anomalous readings",
+      "recon data suggests a shift in overall activity"
+    ];
+    // We'll generate locations dynamically.
+    const formalConfirmations = [
+      "10-4", "copy that", "roger", "affirmative", "understood"
+    ];
+    
+    // Casual banter arrays
+    const banterStarters = ["Hey", "Yo", "Listen up", "Check it out", "Heads up"];
+    const banterRemarks = [
+      "the situation is a bit odd",
+      "I noticed something unusual",
+      "there's a lot going on",
+      "things are definitely shifting",
+      "that action was unexpected"
+    ];
+    const banterFollowUps = [
+      "You following me?", "Over.", "Gotcha.", "Keep your eyes open.", "Right on."
+    ];
+    
+    // Unscripted free‑form messages.
+    const unscriptedMessages = [
+      "Man, things are off today.",
+      "I don't even know what to say.",
+      "This is just crazy.",
+      "What the heck is going on?",
+      "Seriously, can you believe it?",
+      "No comment."
+    ];
+    
+    // Conversation topics with branching dialog and chain messages.
+    const conversationTopics = {
+      weather: {
+        initial: [
+          "The weather's been really strange today—overcast with an unexpected chill.",
+          "I'm noticing a gloomy sky and a persistent chill. It's unusual."
+        ],
+        branchA: [
+          "I think a storm might be brewing; the clouds are darkening.",
+          "The skies are looking ominous—might be a storm soon."
+        ],
+        branchB: [
+          "At least the cool weather is keeping things calm.",
+          "Even with the chill, it seems fairly stable."
+        ],
+        chain: [
+          "The chill is growing stronger, and the clouds are thickening.",
+          "I can sense a gradual change in the weather.",
+          "It looks like the temperature is dropping even further."
+        ]
+      },
+      equipment: {
+        initial: [
+          "My gear seems to be acting up; the signal is a bit fuzzy today.",
+          "I've noticed some interference with my equipment."
+        ],
+        branchA: [
+          "Maybe it's time for a quick maintenance check.",
+          "I think my equipment might need a tune-up soon."
+        ],
+        branchB: [
+          "Is anyone else noticing similar issues with their gear?",
+          "My equipment's been unpredictable—perhaps a minor fault."
+        ],
+        chain: [
+          "The static in my gear is intensifying.",
+          "I'm noticing more interference than usual.",
+          "It might be wise to inspect my equipment soon."
+        ]
+      },
+      operations: {
+        initial: [
+          "There's been a noticeable shift in overall activity.",
+          "Communications seem a bit off today."
+        ],
+        branchA: [
+          "I wonder if we're seeing a subtle change in our routine.",
+          "The current activity doesn't quite match what we're used to."
+        ],
+        branchB: [
+          "It might just be a temporary fluctuation.",
+          "These changes could be nothing—but it's worth noting."
+        ],
+        chain: [
+          "The flow of transmissions is gradually changing.",
+          "I'm sensing a subtle shift in our usual patterns.",
+          "There’s something different in the air today."
+        ]
+      },
+      humorous: {
+        initial: [
+          "Well, that's one for the books!",
+          "You won't believe the stuff coming through today!"
+        ],
+        branchA: [
+          "Sometimes, I swear my radio has a mind of its own.",
+          "I think these frequencies are just messing with me."
+        ],
+        branchB: [
+          "This is absurd—but it’s oddly entertaining.",
+          "Not every day you get such a bizarre update, huh?"
+        ],
+        chain: [
+          "I can't help but chuckle at how unpredictable this is.",
+          "Sometimes the chatter is so offbeat, it's almost comical.",
+          "Who knew radio transmissions could be this funny?"
+        ]
+      },
+      reflective: {
+        initial: [
+          "It's been a long day; I'm taking a moment to reflect.",
+          "Some transmissions really make you ponder the bigger picture."
+        ],
+        branchA: [
+          "I can't shake the feeling there's more beneath the surface.",
+          "The quiet moments between messages speak volumes."
+        ],
+        branchB: [
+          "Every transmission feels like a fragment of a larger story.",
+          "There's a calm introspection in all this chatter."
+        ],
+        chain: [
+          "I'm left thinking about what these messages truly mean.",
+          "Sometimes, the silence is as meaningful as the words.",
+          "I find myself reflecting on the subtle shifts in our chatter."
+        ]
+      }
+    };
+    
+    // Scripted event templates (news flashes)
+    const scriptedEvents = [
+      "All units, please standby for an update.",
+      "Attention all stations: an important update is incoming.",
+      "NEWS FLASH: please prepare for further instructions."
+    ];
+    
+    /***********************
+     * Environmental & Mood Helpers
+     ***********************/
+    // Update the global environmental condition every 10 seconds.
+    function updateEnvironment() {
+      const conditions = ["clear", "cloudy", "rainy", "stormy"];
+      environmentCondition = conditions[Math.floor(Math.random() * conditions.length)];
+      // (Optional: you can integrate environmentCondition into dialogue.)
+    }
+    
+    // Randomly update a user's mood.
+    function updateMood(user) {
+      const moods = ["calm", "agitated", "reflective", "surprised"];
+      user.mood = moods[Math.floor(Math.random() * moods.length)];
+    }
+    
+    // Return a mood-specific prefix to influence dialogue.
+    function getMoodPrefix(mood) {
+      switch(mood) {
+        case "agitated":
+          return "Quick update: ";
+        case "reflective":
+          return "Just thinking: ";
+        case "surprised":
+          return "Whoa, ";
+        default:
+          return "";
+      }
+    }
+    
+    /***********************
+     * Acknowledgment Helper
+     ***********************/
+    function getResponsePrefix(style) {
+      if (style === "formal") {
+        return "Roger";
+      } else if (style === "casual") {
+        return "ten four";
+      } else {
+        return Math.random() < 0.5 ? "Roger" : "ten four";
+      }
+    }
+    
+    /***********************
+     * Message Generator
+     ***********************/
+    function generateMessage(sender, forcedReceiver) {
+      // With some probability, choose an unscripted free‑form message.
+      let unscriptedChance = forcedReceiver ? 0.1 : 0.3;
+      if (Math.random() < unscriptedChance) {
+        let msg = unscriptedMessages[Math.floor(Math.random() * unscriptedMessages.length)];
+        if (Math.random() < 0.5) {
+          msg = sender.callSign + ": " + msg;
+        }
+        return msg;
+      }
+      
+      // Update sender's mood before generating a message.
+      updateMood(sender);
+      let moodPrefix = "";
+      if (sender.mood !== "calm") {
+        moodPrefix = getMoodPrefix(sender.mood);
+      }
+      
+      // Determine style.
+      let style = (sender.style === "mixed") ? (Math.random() < 0.5 ? "formal" : "casual") : sender.style;
+      
+      // Generate a dynamic location for formal messages.
+      const location = generateFormalLocation();
+      
+      // If forced response and an active conversation exists, use topic-specific chain templates.
+      if (forcedReceiver && activeConversation) {
+        let topic = activeConversation.topic;
+        let branchChoice = Math.random();
+        let template;
+        if (branchChoice < 0.33) {
+          template = conversationTopics[topic].initial[Math.floor(Math.random() * conversationTopics[topic].initial.length)];
+        } else if (branchChoice < 0.66) {
+          template = conversationTopics[topic].branchA[Math.floor(Math.random() * conversationTopics[topic].branchA.length)];
+        } else {
+          template = conversationTopics[topic].branchB[Math.floor(Math.random() * conversationTopics[topic].branchB.length)];
+        }
+        let opener = "";
+        if (Math.random() < 0.5) {
+          const responseOpeners = ["In response,", "Regarding that,", "About that,"];
+          opener = responseOpeners[Math.floor(Math.random() * responseOpeners.length)] + " ";
+        }
+        let prefix = getResponsePrefix(style);
+        activeConversation.lastSpeaker = sender.callSign;
+        activeConversation.count++;
+        if (activeConversation.count >= 5) {
+          activeConversation = null;
+        }
+        return `${sender.callSign} to ${forcedReceiver.callSign}: ${opener}${moodPrefix}${prefix}, ${template} Over.`;
+      }
+      
+      // If not forced and no active conversation, with 20% chance start a new conversation thread.
+      if (!forcedReceiver && !activeConversation && Math.random() < 0.2) {
+        let topics = Object.keys(conversationTopics);
+        let chosenTopic = topics[Math.floor(Math.random() * topics.length)];
+        activeConversation = { topic: chosenTopic, lastSpeaker: sender.callSign, count: 1 };
+        let template = conversationTopics[chosenTopic].initial[Math.floor(Math.random() * conversationTopics[chosenTopic].initial.length)];
+        return `${sender.callSign}: ${moodPrefix}${template}`;
+      }
+      
+      // Otherwise, generate a standard structured message.
+      if (forcedReceiver) {
+        let opener = "";
+        if (Math.random() < 0.5) {
+          const responseOpeners = ["In response,", "Regarding that,", "About that,"];
+          opener = responseOpeners[Math.floor(Math.random() * responseOpeners.length)] + " ";
+        }
+        let prefix = getResponsePrefix(style);
+        if (style === "formal") {
+          const observation = formalObservations[Math.floor(Math.random() * formalObservations.length)];
+          return `${sender.callSign} to ${forcedReceiver.callSign}: ${opener}${moodPrefix}${prefix}, ${observation} ${location}. Over.`;
+        } else {
+          const starter = banterStarters[Math.floor(Math.random() * banterStarters.length)];
+          const remark = banterRemarks[Math.floor(Math.random() * banterRemarks.length)];
+          return `${sender.callSign} to ${forcedReceiver.callSign}: ${opener}${moodPrefix}${prefix}, ${starter} – ${remark}. Over.`;
+        }
+      } else {
+        let isBroadcast = Math.random() < sender.broadcastChance;
+        if (isBroadcast) {
+          if (style === "formal") {
+            const observation = formalObservations[Math.floor(Math.random() * formalObservations.length)];
+            return `${sender.callSign} to all units: ${moodPrefix}${observation} ${location}. Over.`;
+          } else {
+            const starter = banterStarters[Math.floor(Math.random() * banterStarters.length)];
+            const remark = banterRemarks[Math.floor(Math.random() * banterRemarks.length)];
+            return Math.random() < 0.5
+              ? `${sender.callSign} to all units: ${moodPrefix}${starter}, ${remark}. Over.`
+              : `${sender.callSign} to all units: ${moodPrefix}${starter} – ${remark}. Over.`;
+          }
+        } else {
+          let potentialReceivers = users.filter(u => u.callSign !== sender.callSign);
+          let receiver = potentialReceivers[Math.floor(Math.random() * potentialReceivers.length)];
+          if (style === "formal") {
+            const observation = formalObservations[Math.floor(Math.random() * formalObservations.length)];
+            return `${sender.callSign} to ${receiver.callSign}: ${moodPrefix}${observation} ${location}. Over.`;
+          } else {
+            const starter = banterStarters[Math.floor(Math.random() * banterStarters.length)];
+            const remark = banterRemarks[Math.floor(Math.random() * banterRemarks.length)];
+            return Math.random() < 0.5
+              ? `${sender.callSign} to ${receiver.callSign}: ${moodPrefix}${starter}, ${remark}. Over.`
+              : `${sender.callSign} to ${receiver.callSign}: ${moodPrefix}${starter} – ${remark}. Over.`;
+          }
+        }
+      }
+    }
+    
+    /***********************
+     * Per-Character Noise
+     ***********************/
+    function playCharacterNoise(user) {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+      }
+      const duration = 5; // seconds
+      const sampleRate = audioCtx.sampleRate;
+      const bufferSize = sampleRate * duration;
+      const noiseBuffer = audioCtx.createBuffer(1, bufferSize, sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      const noiseSource = audioCtx.createBufferSource();
+      noiseSource.buffer = noiseBuffer;
+      noiseSource.loop = true;
+      
+      const filter = audioCtx.createBiquadFilter();
+      if (user.callSign === "Alpha") {
+        filter.type = "lowpass";
+        filter.frequency.setValueAtTime(500, audioCtx.currentTime);
+      } else if (user.callSign === "Bravo") {
+        filter.type = "bandpass";
+        filter.frequency.setValueAtTime(2000, audioCtx.currentTime);
+        filter.Q.setValueAtTime(1.0, audioCtx.currentTime);
+      } else if (user.callSign === "Charlie") {
+        filter.type = "highpass";
+        filter.frequency.setValueAtTime(1500, audioCtx.currentTime);
+      } else {
+        filter.type = "bandpass";
+        filter.frequency.setValueAtTime(1000, audioCtx.currentTime);
+      }
+      
+      const gainNode = audioCtx.createGain();
+      gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+      
+      noiseSource.connect(filter);
+      filter.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      noiseSource.start();
+      return noiseSource;
+    }
+    
+    /***********************
+     * Global Audio Interference
+     ***********************/
+    function playCommBlip() {
+      if (!audioCtx) return;
+      const blipOsc = audioCtx.createOscillator();
+      const blipGain = audioCtx.createGain();
+      blipOsc.frequency.setValueAtTime(1200, audioCtx.currentTime);
+      blipGain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      blipOsc.connect(blipGain);
+      blipGain.connect(audioCtx.destination);
+      blipOsc.start();
+      blipGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+      blipOsc.stop(audioCtx.currentTime + 0.15);
+    }
+    
+    function startInterference() {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+      }
+      const sampleRate = audioCtx.sampleRate;
+      const bufferSize = sampleRate * 2;
+      const noiseBuffer = audioCtx.createBuffer(1, bufferSize, sampleRate);
+      const output = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        output[i] = Math.random() * 2 - 1;
+      }
+      basicNoiseSource = audioCtx.createBufferSource();
+      basicNoiseSource.buffer = noiseBuffer;
+      basicNoiseSource.loop = true;
+      const basicFilter = audioCtx.createBiquadFilter();
+      basicFilter.type = "bandpass";
+      basicFilter.frequency.setValueAtTime(3000, audioCtx.currentTime);
+      basicFilter.Q.setValueAtTime(1, audioCtx.currentTime);
+      const basicGain = audioCtx.createGain();
+      basicGain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+      basicNoiseSource.connect(basicFilter);
+      basicFilter.connect(basicGain);
+      basicGain.connect(audioCtx.destination);
+      basicNoiseSource.start();
+      advancedNoiseSource = audioCtx.createBufferSource();
+      advancedNoiseSource.buffer = noiseBuffer;
+      advancedNoiseSource.loop = true;
+      const advancedFilter = audioCtx.createBiquadFilter();
+      advancedFilter.type = "bandpass";
+      advancedFilter.frequency.setValueAtTime(2500, audioCtx.currentTime);
+      advancedFilter.Q.setValueAtTime(1.5, audioCtx.currentTime);
+      const advancedGain = audioCtx.createGain();
+      advancedGain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+      lfo = audioCtx.createOscillator();
+      lfo.frequency.setValueAtTime(0.5, audioCtx.currentTime);
+      const lfoGain = audioCtx.createGain();
+      lfoGain.gain.setValueAtTime(0.03, audioCtx.currentTime);
+      const nonLinearShaper = audioCtx.createWaveShaper();
+      nonLinearShaper.curve = makeNonlinearCurve(3);
+      nonLinearShaper.oversample = '4x';
+      lfo.connect(lfoGain);
+      lfoGain.connect(nonLinearShaper);
+      nonLinearShaper.connect(advancedGain.gain);
+      lfo.start();
+      advancedNoiseSource.connect(advancedFilter);
+      advancedFilter.connect(advancedGain);
+      advancedGain.connect(audioCtx.destination);
+      advancedNoiseSource.start();
+    }
+    
+    function triggerBurstInterference() {
+      if (!audioCtx) return;
+      const burstDuration = 0.1;
+      const sampleRate = audioCtx.sampleRate;
+      const burstBuffer = audioCtx.createBuffer(1, sampleRate * burstDuration, sampleRate);
+      const burstData = burstBuffer.getChannelData(0);
+      for (let i = 0; i < burstBuffer.length; i++) {
+        burstData[i] = Math.random() * 2 - 1;
+      }
+      const burstSource = audioCtx.createBufferSource();
+      burstSource.buffer = burstBuffer;
+      const burstGain = audioCtx.createGain();
+      burstGain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      burstGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + burstDuration);
+      const burstFilter = audioCtx.createBiquadFilter();
+      burstFilter.type = "highpass";
+      burstFilter.frequency.setValueAtTime(2000, audioCtx.currentTime);
+      burstSource.connect(burstFilter);
+      burstFilter.connect(burstGain);
+      burstGain.connect(audioCtx.destination);
+      burstSource.start();
+      burstSource.stop(audioCtx.currentTime + burstDuration);
+    }
+    
+    function scheduleBurstInterference() {
+      if (!simulationRunning) return;
+      const burstInterval = Math.random() * 3000 + 2000;
+      burstInterferenceTimer = setTimeout(() => {
+        triggerBurstInterference();
+        scheduleBurstInterference();
+      }, burstInterval);
+    }
+    
+    /***********************
+     * Voice Assignment
+     ***********************/
+    function assignUserVoices() {
+      availableVoices = window.speechSynthesis.getVoices();
+      updateStatus(`Loaded ${availableVoices.length} voice(s).`);
+      if (availableVoices.length === 0) {
+        updateStatus("No voices available.");
+        return;
+      }
+      users.forEach((user, index) => {
+        user.voice = availableVoices[index % availableVoices.length];
+        console.log(`Assigned ${user.callSign} voice: ${user.voice.name}`);
+      });
+    }
+    
+    /***********************
+     * Conversation Logic & Transmission Simulation
+     ***********************/
+    // If the previous message was not a broadcast then with 70% probability the next message is a direct response.
+    // Variable delays:
+    // - Direct responses and chain messages: 1–3 seconds.
+    // - Initial/broadcast messages: 3–5 seconds.
+    // Occasionally, scripted events (news flashes) occur.
+    function simulateTransmission() {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+      }
+      
+      let sender, forcedReceiver = null;
+      if (lastMessage && !lastMessage.broadcast && Math.random() < 0.7) {
+        sender = lastMessage.receiver;
+        forcedReceiver = lastMessage.sender;
+      } else {
+        let possibleSenders = users;
+        if (lastMessage) {
+          possibleSenders = users.filter(u => u.callSign !== lastMessage.sender.callSign);
+        }
+        sender = possibleSenders[Math.floor(Math.random() * possibleSenders.length)];
+      }
+      
+      // Occasionally trigger a scripted event if not in a forced response.
+      if (!forcedReceiver && Math.random() < 0.1) {
+        let eventMsg = scriptedEvents[Math.floor(Math.random() * scriptedEvents.length)];
+        const logDiv = document.getElementById('log');
+        const p = document.createElement('p');
+        p.textContent = eventMsg;
+        logDiv.appendChild(p);
+        logDiv.scrollTop = logDiv.scrollHeight;
+        setTimeout(simulateTransmission, 3000);
+        return;
+      }
+      
+      let message = generateMessage(sender, forcedReceiver);
+      let broadcast = message.includes("to all units:");
+      
+      const logDiv = document.getElementById('log');
+      const p = document.createElement('p');
+      p.textContent = message;
+      logDiv.appendChild(p);
+      logDiv.scrollTop = logDiv.scrollHeight;
+      
+      const utterance = new SpeechSynthesisUtterance(message);
+      utterance.lang = 'en-US';
+      utterance.pitch = sender.pitch;
+      utterance.rate = sender.rate;
+      if (sender.voice) {
+        utterance.voice = sender.voice;
+      }
+      
+      let charNoiseSource = null;
+      utterance.onstart = function() {
+        playCommBlip();
+        charNoiseSource = playCharacterNoise(sender);
+      };
+      utterance.onend = function() {
+        playCommBlip();
+        if (charNoiseSource) {
+          try { charNoiseSource.stop(); } catch(e) {}
+        }
+      };
+      
+      window.speechSynthesis.speak(utterance);
+      
+      let receiverObj;
+      if (forcedReceiver) {
+        receiverObj = forcedReceiver;
+      } else if (broadcast) {
+        receiverObj = { callSign: "all units" };
+      } else {
+        let potentialReceivers = users.filter(u => u.callSign !== sender.callSign);
+        receiverObj = potentialReceivers[Math.floor(Math.random() * potentialReceivers.length)];
+      }
+      
+      lastMessage = {
+        sender: sender,
+        receiver: receiverObj,
+        broadcast: broadcast,
+        message: message,
+        isResponse: (forcedReceiver !== null)
+      };
+    }
+    
+    /***********************
+     * Simulation Control
+     ***********************/
+    function startSimulation() {
+      if (simulationRunning) return;
+      simulationRunning = true;
+      
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length === 0) {
+        updateStatus("Loading voices...");
+        window.speechSynthesis.onvoiceschanged = () => {
+          assignUserVoices();
+          updateStatus("Voices loaded. Starting simulation...");
+        };
+      } else {
+        assignUserVoices();
+        updateStatus("Voices loaded. Starting simulation...");
+      }
+      
+      startInterference();
+      scheduleBurstInterference();
+      setInterval(updateEnvironment, 10000);  // Update environment every 10 seconds.
+      
+      (function scheduleNext() {
+        if (!simulationRunning) return;
+        let delay;
+        if (lastMessage && lastMessage.isResponse) {
+          delay = Math.random() * 2000 + 1000; // 1–3 seconds for responses.
+        } else {
+          delay = Math.random() * 2000 + 3000; // 3–5 seconds for initial/broadcast messages.
+        }
+        setTimeout(() => {
+          simulateTransmission();
+          scheduleNext();
+        }, delay);
+      })();
+    }
+    
+    function stopSimulation() {
+      simulationRunning = false;
+      window.speechSynthesis.cancel();
+      updateStatus("Simulation stopped.");
+      
+      if (basicNoiseSource) {
+        try { basicNoiseSource.stop(); } catch(e) {}
+        basicNoiseSource.disconnect();
+        basicNoiseSource = null;
+      }
+      if (advancedNoiseSource) {
+        try { advancedNoiseSource.stop(); } catch(e) {}
+        advancedNoiseSource.disconnect();
+        advancedNoiseSource = null;
+      }
+      if (lfo) {
+        try { lfo.stop(); } catch(e) {}
+        lfo.disconnect();
+        lfo = null;
+      }
+      if (burstInterferenceTimer) {
+        clearTimeout(burstInterferenceTimer);
+        burstInterferenceTimer = null;
+      }
+    }
+    
+    /***********************
+     * Event Listeners
+     ***********************/
+    document.getElementById('startSim').addEventListener('click', startSimulation);
+    document.getElementById('stopSim').addEventListener('click', stopSimulation);
+  </script>
+</body>
+</html>
